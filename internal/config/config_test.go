@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -22,9 +23,15 @@ func envFrom(m map[string]string) func(string) string {
 	return func(key string) string { return m[key] }
 }
 
+func withDefaults(modify func(*Config)) Config {
+	c := Default()
+	modify(&c)
+	return c
+}
+
 func TestLoad(t *testing.T) {
 	dir := t.TempDir()
-	user := writeFile(t, dir, "user.json", `{"model": "user-model", "max_turns": 10}`)
+	user := writeFile(t, dir, "user.json", `{"model": "user-model", "max_turns": 10, "bash_timeout": "45s"}`)
 	project := writeFile(t, dir, "project.json", `{"max_turns": 20}`)
 	missing := filepath.Join(dir, "missing.json")
 
@@ -37,24 +44,28 @@ func TestLoad(t *testing.T) {
 		{
 			name: "defaults plus model from env",
 			env:  map[string]string{EnvModel: "env-model"},
-			want: Config{Model: "env-model", MaxTokens: Default().MaxTokens, MaxTurns: Default().MaxTurns},
+			want: withDefaults(func(c *Config) { c.Model = "env-model" }),
 		},
 		{
 			name:  "missing file is skipped",
 			paths: []string{missing},
 			env:   map[string]string{EnvModel: "env-model"},
-			want:  Config{Model: "env-model", MaxTokens: Default().MaxTokens, MaxTurns: Default().MaxTurns},
+			want:  withDefaults(func(c *Config) { c.Model = "env-model" }),
 		},
 		{
 			name:  "later files override earlier ones field by field",
 			paths: []string{user, project},
-			want:  Config{Model: "user-model", MaxTokens: Default().MaxTokens, MaxTurns: 20},
+			want: withDefaults(func(c *Config) {
+				c.Model, c.MaxTurns, c.BashTimeout = "user-model", 20, Duration(45*time.Second)
+			}),
 		},
 		{
 			name:  "environment overrides files",
 			paths: []string{user},
 			env:   map[string]string{EnvModel: "env-model", EnvAPIKey: "sk-test"},
-			want:  Config{Model: "env-model", MaxTokens: Default().MaxTokens, MaxTurns: 10, APIKey: "sk-test"},
+			want: withDefaults(func(c *Config) {
+				c.Model, c.MaxTurns, c.BashTimeout, c.APIKey = "env-model", 10, Duration(45*time.Second), "sk-test"
+			}),
 		},
 	}
 	for _, tt := range tests {
@@ -82,6 +93,8 @@ func TestLoadErrors(t *testing.T) {
 		{name: "unknown field", content: `{"bogus": "x"}`, wantErr: `unknown field "bogus"`},
 		{name: "api key is not a file setting", content: `{"api_key": "sk"}`, wantErr: `unknown field "api_key"`},
 		{name: "invalid value", content: `{"max_turns": 0}`, wantErr: "max_turns must be positive"},
+		{name: "invalid duration", content: `{"max_duration": "soon"}`, wantErr: `invalid duration "soon"`},
+		{name: "negative retries", content: `{"model": "m", "max_retries": -1}`, wantErr: "max_retries must not be negative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -99,7 +112,7 @@ func TestValidateReportsAllErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Config{}.Validate() = nil, want error")
 	}
-	for _, want := range []string{"model is not set", "max_tokens", "max_turns"} {
+	for _, want := range []string{"model is not set", "max_tokens", "max_turns", "max_duration", "bash_timeout"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Config{}.Validate() = %q, want it to mention %q", err, want)
 		}

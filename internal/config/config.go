@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Environment variables read by Load.
@@ -22,16 +23,28 @@ const (
 )
 
 type Config struct {
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens"`
-	MaxTurns  int    `json:"max_turns"`
-	APIKey    Secret `json:"-"`
+	Model          string   `json:"model"`
+	MaxTokens      int      `json:"max_tokens"`
+	MaxTurns       int      `json:"max_turns"`
+	MaxRunTokens   int      `json:"max_run_tokens"`
+	MaxDuration    Duration `json:"max_duration"`
+	RequestTimeout Duration `json:"request_timeout"`
+	MaxRetries     int      `json:"max_retries"`
+	BashTimeout    Duration `json:"bash_timeout"`
+	MaxToolOutput  int      `json:"max_tool_output"`
+	APIKey         Secret   `json:"-"`
 }
 
 func Default() Config {
 	return Config{
-		MaxTokens: 16000,
-		MaxTurns:  50,
+		MaxTokens:      16000,
+		MaxTurns:       50,
+		MaxRunTokens:   2_000_000,
+		MaxDuration:    Duration(30 * time.Minute),
+		RequestTimeout: Duration(10 * time.Minute),
+		MaxRetries:     2,
+		BashTimeout:    Duration(2 * time.Minute),
+		MaxToolOutput:  30_000,
 	}
 }
 
@@ -83,11 +96,25 @@ func (c Config) Validate() error {
 	if c.Model == "" {
 		errs = append(errs, errors.New(`model is not set; set "model" in a config file or `+EnvModel))
 	}
-	if c.MaxTokens <= 0 {
-		errs = append(errs, fmt.Errorf("max_tokens must be positive, got %d", c.MaxTokens))
+	positive := []struct {
+		name  string
+		value int64
+	}{
+		{"max_tokens", int64(c.MaxTokens)},
+		{"max_turns", int64(c.MaxTurns)},
+		{"max_run_tokens", int64(c.MaxRunTokens)},
+		{"max_duration", int64(c.MaxDuration)},
+		{"request_timeout", int64(c.RequestTimeout)},
+		{"bash_timeout", int64(c.BashTimeout)},
+		{"max_tool_output", int64(c.MaxToolOutput)},
 	}
-	if c.MaxTurns <= 0 {
-		errs = append(errs, fmt.Errorf("max_turns must be positive, got %d", c.MaxTurns))
+	for _, f := range positive {
+		if f.value <= 0 {
+			errs = append(errs, fmt.Errorf("%s must be positive", f.name))
+		}
+	}
+	if c.MaxRetries < 0 {
+		errs = append(errs, fmt.Errorf("max_retries must not be negative, got %d", c.MaxRetries))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("invalid config: %w", err)

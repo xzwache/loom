@@ -95,10 +95,14 @@ const (
 )
 
 type Usage struct {
-	InputTokens      int
-	OutputTokens     int
-	CacheReadTokens  int
-	CacheWriteTokens int
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+}
+
+func (u Usage) Total() int {
+	return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
 }
 
 func (u Usage) Add(o Usage) Usage {

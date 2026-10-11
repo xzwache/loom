@@ -31,6 +31,8 @@ linters:
       rules:
         - name: package-comments
         - name: context-as-argument
+          arguments:
+            - allowTypesBefore: "*testing.T"
         - name: error-strings
         - name: error-naming
         - name: receiver-naming

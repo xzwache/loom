@@ -2,24 +2,39 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/xzwache/loom/internal/config"
+	"github.com/xzwache/loom/internal/llm"
 )
 
 var version = "dev"
 
 const (
-	exitOK    = 0
-	exitError = 1
-	exitUsage = 2
+	exitOK          = 0
+	exitError       = 1
+	exitUsage       = 2
+	exitIncomplete  = 3
+	exitInterrupted = 130
 )
+
+type env struct {
+	stdout   io.Writer
+	stderr   io.Writer
+	getenv   func(string) string
+	workdir  string
+	newModel func(config.Config) llm.Model
+}
 
 func main() {
 	workdir, err := os.Getwd()
@@ -27,15 +42,35 @@ func main() {
 		fmt.Fprintf(os.Stderr, "loom: %v\n", err)
 		os.Exit(exitError)
 	}
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv, workdir))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], env{
+		stdout:   os.Stdout,
+		stderr:   os.Stderr,
+		getenv:   os.Getenv,
+		workdir:  workdir,
+		newModel: newAnthropic,
+	})
+	stop()
+	os.Exit(code)
 }
 
-func run(args []string, stdout, stderr io.Writer, getenv func(string) string, workdir string) int {
+func newAnthropic(cfg config.Config) llm.Model {
+	return llm.NewAnthropic(llm.AnthropicOptions{
+		APIKey:     cfg.APIKey.Reveal(),
+		Timeout:    cfg.RequestTimeout.Std(),
+		MaxRetries: cfg.MaxRetries,
+	})
+}
+
+func run(ctx context.Context, args []string, e env) int {
 	fs := flag.NewFlagSet("loom", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(e.stderr)
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	printConfig := fs.Bool("print-config", false, "print the effective configuration as JSON and exit")
 	configPath := fs.String("config", "", "additional config file, applied after the default ones")
+	task := fs.String("p", "", "run this task without interaction and print the result")
+	jsonOut := fs.Bool("json", false, "with -p, print the result as JSON")
+	quiet := fs.Bool("quiet", false, "log only warnings and errors")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -44,32 +79,46 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, wo
 	}
 
 	if *showVersion {
-		fmt.Fprintf(stdout, "loom %s\n", version)
+		fmt.Fprintf(e.stdout, "loom %s\n", version)
 		return exitOK
 	}
 
-	paths := config.DefaultPaths(configHome(getenv), workdir)
+	if *task == "" && !*printConfig {
+		fmt.Fprintln(e.stderr, `loom: no task given; run loom -p "<task>"`)
+		return exitUsage
+	}
+
+	paths := config.DefaultPaths(configHome(e.getenv), e.workdir)
 	if *configPath != "" {
 		paths = append(paths, *configPath)
 	}
-	cfg, err := config.Load(paths, getenv)
+	cfg, err := config.Load(paths, e.getenv)
 	if err != nil {
-		fmt.Fprintf(stderr, "loom: %v\n", err)
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
 		return exitError
 	}
 
 	if *printConfig {
-		enc := json.NewEncoder(stdout)
+		enc := json.NewEncoder(e.stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(cfg); err != nil {
-			fmt.Fprintf(stderr, "loom: %v\n", err)
+			fmt.Fprintf(e.stderr, "loom: %v\n", err)
 			return exitError
 		}
 		return exitOK
 	}
 
-	fmt.Fprintln(stderr, "loom: no task given; the agent loop is not implemented yet")
-	return exitUsage
+	if cfg.APIKey == "" {
+		fmt.Fprintf(e.stderr, "loom: %s is not set\n", config.EnvAPIKey)
+		return exitError
+	}
+
+	level := slog.LevelInfo
+	if *quiet {
+		level = slog.LevelWarn
+	}
+	log := slog.New(slog.NewTextHandler(e.stderr, &slog.HandlerOptions{Level: level}))
+	return runTask(ctx, cfg, *task, *jsonOut, log, e)
 }
 
 func configHome(getenv func(string) string) string {
