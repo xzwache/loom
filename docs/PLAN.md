@@ -1,0 +1,50 @@
+# loom core plan (s01–s10)
+
+Goal: a working core agent with the architecture every later feature plugs into.
+Each step is one PR, small enough to review, and ends with a short summary.
+
+## Architecture
+
+```
+cmd/loom            flags, config, wiring, run() -> exit code
+internal/llm        loom message types, Provider interface, anthropic impl
+internal/llm/llmtest scripted fake provider for hermetic tests
+internal/agent      the loop: stop_reason switch, budgets, dispatch, Agent spec (also used for subagents)
+internal/tool       Tool interface, Registry, builtin/{bash,read,write,edit,glob}
+internal/event      typed lifecycle events: UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact
+internal/hook       hook chain over events: allow / deny / modify / continue decisions
+internal/permission rules (allow/deny/ask by tool + pattern), registered as a PreToolUse hook
+internal/prompt     system prompt built from ordered sections (stable prefix)
+internal/todo       todo tool + reminder (via a hook)
+internal/skill      SKILL.md discovery, catalog section, load_skill tool
+internal/compact    Compactor chain, each stage returns a report
+internal/memory     Store interface + file store, memory tools
+internal/task       task graph (blockedBy, cycle check) + file store, task tools
+internal/trace      JSONL run trace (an event subscriber)
+internal/config     typed config, layered loading
+```
+
+The two seams that the later features depend on:
+1. **Events + hooks**: permissions, todo reminders, tracing, stuck detection, the verifier,
+   and user hooks all attach here instead of to the loop.
+2. **Agent spec**: an `Agent` is config (model, prompt sections, tool subset, budget).
+   A subagent is the same type with a fresh history, so cheap-model routing and forking come almost for free.
+
+## Steps
+
+| # | Step | Course | Done when |
+|---|---|---|---|
+| 0 | Scaffold: go.mod, Makefile, golangci config, CI, config package | — | `make check` green in CI |
+| 1 | `llm`: message types, Provider, Anthropic impl, fake provider, retries | s01 | Fake-provider tests; one integration test with a real key |
+| 2 | `agent` loop with the `bash` tool, stop_reason handling, budgets, headless mode | s01 | `loom -p "..."` solves a small task |
+| 3 | `tool` registry + read/write/edit/glob, output truncation, path safety | s02 | Each tool table-tested |
+| 4 | `event` + `hook` chain, `trace` as a subscriber | s04 | Trace JSONL shows every step |
+| 5 | `permission` rules as a PreToolUse hook, ask prompt in interactive mode | s03 | Denied call returns an `is_error` result, and the denial is in the trace |
+| 6 | `prompt` sections + `todo` tool and reminder | s05 | Reminder fires after N turns without a todo update |
+| 7 | Subagents: `task` tool spawning an Agent with a tool subset and budget | s06 | Parent receives one summary; no recursion |
+| 8 | `skill` loading | s07 | Catalog in prompt, body loaded on demand |
+| 9 | `compact` chain with reports | s08 | Long-run test keeps context under the limit; reports in the trace |
+| 10 | `memory` store + tools | s09 | Facts survive a restart |
+| 11 | `task` graph + tools | s10 | Dependency order and cycle rejection tested |
+
+Steps 4–5 come before 6–11 on purpose: everything after them is built on hooks.
