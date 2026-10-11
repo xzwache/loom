@@ -1,6 +1,6 @@
 //go:build unix
 
-package tool
+package bash
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func runBash(t *testing.T, ctx context.Context, b *Bash, command string) (string, error) {
+func runBash(t *testing.T, ctx context.Context, b *Tool, command string) (string, error) {
 	t.Helper()
 	input, err := json.Marshal(map[string]string{"command": command})
 	if err != nil {
@@ -21,7 +21,7 @@ func runBash(t *testing.T, ctx context.Context, b *Bash, command string) (string
 
 func TestBash(t *testing.T) {
 	dir := t.TempDir()
-	b := &Bash{Dir: dir, Timeout: 5 * time.Second, MaxOutput: 1000}
+	b := &Tool{Dir: dir, Timeout: 5 * time.Second, MaxOutput: 1000}
 
 	tests := []struct {
 		name    string
@@ -55,7 +55,7 @@ func TestBash(t *testing.T) {
 }
 
 func TestBashInvalidInput(t *testing.T) {
-	b := &Bash{Timeout: time.Second, MaxOutput: 100}
+	b := &Tool{Timeout: time.Second, MaxOutput: 100}
 	for _, input := range []string{`{`, `{"command": ""}`} {
 		if _, err := b.Run(context.Background(), json.RawMessage(input)); err == nil {
 			t.Errorf("Run(%s) error = nil, want error", input)
@@ -64,7 +64,7 @@ func TestBashInvalidInput(t *testing.T) {
 }
 
 func TestBashTruncatesOutput(t *testing.T) {
-	b := &Bash{Timeout: 5 * time.Second, MaxOutput: 100}
+	b := &Tool{Timeout: 5 * time.Second, MaxOutput: 100}
 	got, err := runBash(t, context.Background(), b, "head -c 5000 /dev/zero | tr '\\0' a")
 	if err != nil {
 		t.Fatalf("Run error: %v", err)
@@ -75,7 +75,7 @@ func TestBashTruncatesOutput(t *testing.T) {
 }
 
 func TestBashTimeoutKillsChildren(t *testing.T) {
-	b := &Bash{Timeout: 200 * time.Millisecond, MaxOutput: 100}
+	b := &Tool{Timeout: 200 * time.Millisecond, MaxOutput: 100}
 	start := time.Now()
 	_, err := runBash(t, context.Background(), b, "sleep 30 & sleep 30; wait")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
@@ -87,7 +87,7 @@ func TestBashTimeoutKillsChildren(t *testing.T) {
 }
 
 func TestBashCancelled(t *testing.T) {
-	b := &Bash{Timeout: 10 * time.Second, MaxOutput: 100}
+	b := &Tool{Timeout: 10 * time.Second, MaxOutput: 100}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	_, err := runBash(t, ctx, b, "sleep 30")

@@ -1,5 +1,4 @@
-// Package tool defines the tools the agent can call and their built-in
-// implementations.
+// Package tool defines the Tool interface, the registry and the file system workspace.
 package tool
 
 import (
@@ -11,15 +10,11 @@ import (
 	"github.com/xzwache/loom/internal/llm"
 )
 
-// Tool is something the model can call. An error from Run is reported to the
-// model as a failed tool result; it never stops the agent loop.
 type Tool interface {
 	Spec() llm.ToolSpec
 	Run(ctx context.Context, input json.RawMessage) (string, error)
 }
 
-// Truncate keeps the head and tail of s within limit bytes, since both the
-// start of command output and its last lines (errors, summaries) matter.
 func Truncate(s string, limit int) string {
 	if len(s) <= limit {
 		return s

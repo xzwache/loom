@@ -10,6 +10,11 @@ import (
 	"github.com/xzwache/loom/internal/config"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/tool"
+	"github.com/xzwache/loom/internal/tool/bash"
+	"github.com/xzwache/loom/internal/tool/edit"
+	"github.com/xzwache/loom/internal/tool/glob"
+	"github.com/xzwache/loom/internal/tool/read"
+	"github.com/xzwache/loom/internal/tool/write"
 )
 
 type taskOutput struct {
@@ -20,14 +25,30 @@ type taskOutput struct {
 }
 
 func runTask(ctx context.Context, cfg config.Config, task string, jsonOut bool, log *slog.Logger, e env) int {
+	ws, err := tool.OpenFileSystemWorkspace(e.workdir)
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+	defer ws.Close()
+	tools, err := tool.NewRegistry(
+		&bash.Tool{Dir: ws.Dir(), Timeout: cfg.BashTimeout.Std(), MaxOutput: cfg.MaxToolOutput},
+		&read.Tool{Workspace: ws, MaxOutput: cfg.MaxToolOutput},
+		&write.Tool{Workspace: ws},
+		&edit.Tool{Workspace: ws},
+		&glob.Tool{Workspace: ws},
+	)
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+
 	a := &agent.Agent{
 		Model:     e.newModel(cfg),
 		ModelID:   cfg.Model,
-		System:    systemPrompt(e.workdir),
+		System:    systemPrompt(ws.Dir()),
 		MaxTokens: cfg.MaxTokens,
-		Tools: []tool.Tool{
-			&tool.Bash{Dir: e.workdir, Timeout: cfg.BashTimeout.Std(), MaxOutput: cfg.MaxToolOutput},
-		},
+		Tools:     tools,
 		Budget: agent.Budget{
 			MaxTurns:    cfg.MaxTurns,
 			MaxTokens:   cfg.MaxRunTokens,

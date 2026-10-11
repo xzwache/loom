@@ -42,7 +42,7 @@ linters:
     presets:
       - std-error-handling
     rules:
-      - path: _test\.go
+      - path: (_test\.go|test/[^/]+\.go)$
         linters:
           - gosec
 

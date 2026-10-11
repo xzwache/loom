@@ -1,4 +1,5 @@
-package tool
+// Package bash implements the bash tool.
+package bash
 
 import (
 	"bytes"
@@ -10,15 +11,16 @@ import (
 	"time"
 
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/tool"
 )
 
-type Bash struct {
+type Tool struct {
 	Dir       string
 	Timeout   time.Duration
 	MaxOutput int
 }
 
-var _ Tool = (*Bash)(nil)
+var _ tool.Tool = (*Tool)(nil)
 
 var errCommandTimeout = errors.New("command timed out")
 
@@ -31,7 +33,7 @@ var bashSchema = json.RawMessage(`{
 	"additionalProperties": false
 }`)
 
-func (b *Bash) Spec() llm.ToolSpec {
+func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "bash",
 		Description: "Run a bash command in the working directory and return its combined stdout and stderr. " +
@@ -40,7 +42,7 @@ func (b *Bash) Spec() llm.ToolSpec {
 	}
 }
 
-func (b *Bash) Run(ctx context.Context, input json.RawMessage) (string, error) {
+func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	var in struct {
 		Command string `json:"command"`
 	}
@@ -51,23 +53,22 @@ func (b *Bash) Run(ctx context.Context, input json.RawMessage) (string, error) {
 		return "", errors.New("command is empty")
 	}
 
-	ctx, cancel := context.WithTimeoutCause(ctx, b.Timeout, errCommandTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, t.Timeout, errCommandTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", in.Command) //nolint:gosec // G204: running the model's command is this tool's job
-	cmd.Dir = b.Dir
+	cmd.Dir = t.Dir
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	killProcessGroupOnCancel(cmd)
-	// Background children can keep the output pipe open after bash exits.
 	cmd.WaitDelay = time.Second
 
 	err := cmd.Run()
-	output := Truncate(out.String(), b.MaxOutput)
+	output := tool.Truncate(out.String(), t.MaxOutput)
 	switch {
 	case errors.Is(context.Cause(ctx), errCommandTimeout):
-		return "", fmt.Errorf("command timed out after %s\n%s", b.Timeout, output)
+		return "", fmt.Errorf("command timed out after %s\n%s", t.Timeout, output)
 	case ctx.Err() != nil:
 		return "", fmt.Errorf("command cancelled\n%s", output)
 	case err != nil:

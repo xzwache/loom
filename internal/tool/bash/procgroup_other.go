@@ -1,6 +1,6 @@
 //go:build !unix
 
-package tool
+package bash
 
 import "os/exec"
 

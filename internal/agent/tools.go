@@ -12,22 +12,8 @@ import (
 
 const logInputLimit = 200
 
-func indexTools(tools []tool.Tool) (map[string]tool.Tool, []llm.ToolSpec, error) {
-	byName := make(map[string]tool.Tool, len(tools))
-	specs := make([]llm.ToolSpec, 0, len(tools))
-	for _, t := range tools {
-		spec := t.Spec()
-		if _, dup := byName[spec.Name]; dup {
-			return nil, nil, fmt.Errorf("duplicate tool name %q", spec.Name)
-		}
-		byName[spec.Name] = t
-		specs = append(specs, spec)
-	}
-	return byName, specs, nil
-}
-
 // runTools answers every tool use in content, in order, in one user message.
-func runTools(ctx context.Context, log *slog.Logger, tools map[string]tool.Tool, content []llm.Block) llm.Message {
+func runTools(ctx context.Context, log *slog.Logger, tools *tool.Registry, content []llm.Block) llm.Message {
 	var results []llm.Block
 	for _, b := range content {
 		if use, ok := b.(llm.ToolUse); ok {
@@ -37,11 +23,11 @@ func runTools(ctx context.Context, log *slog.Logger, tools map[string]tool.Tool,
 	return llm.Message{Role: llm.RoleUser, Content: results}
 }
 
-func runTool(ctx context.Context, log *slog.Logger, tools map[string]tool.Tool, use llm.ToolUse) (res llm.ToolResult) {
+func runTool(ctx context.Context, log *slog.Logger, tools *tool.Registry, use llm.ToolUse) (res llm.ToolResult) {
 	if ctx.Err() != nil {
 		return failed(use.ID, "not run: the run was stopped")
 	}
-	t, ok := tools[use.Name]
+	t, ok := tools.Get(use.Name)
 	if !ok {
 		return failed(use.ID, fmt.Sprintf("unknown tool %q", use.Name))
 	}

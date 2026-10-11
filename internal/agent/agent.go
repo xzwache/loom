@@ -21,7 +21,7 @@ type Agent struct {
 	Model     llm.Model
 	ModelID   string
 	System    string
-	Tools     []tool.Tool
+	Tools     *tool.Registry
 	MaxTokens int
 	Budget    Budget
 	Log       *slog.Logger
@@ -65,10 +65,12 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	if a.Model == nil {
 		return Result{}, errors.New("agent has no model")
 	}
-	tools, specs, err := indexTools(a.Tools)
-	if err != nil {
-		return Result{}, err
+
+	tools := a.Tools
+	if tools == nil {
+		tools, _ = tool.NewRegistry()
 	}
+	specs := tools.Specs()
 	if a.Budget.MaxDuration > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeoutCause(ctx, a.Budget.MaxDuration, errTimeBudget)
