@@ -140,9 +140,16 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
 ## 10. Documentation and comments
 
 - Every package has a package comment (`// Package agent runs ...`).
-- Every exported identifier has a doc comment that starts with its name and is a full sentence.
-- Comments explain **why**, not what. Remove commented-out code.
-- Document concurrency safety for mutating types, cleanup requirements (`Close`), and returned sentinel errors.
+- **Comment only what the code can't say.** Names should make most doc comments unnecessary;
+  no comments that restate the signature. Comments explain **why**, not what. Remove commented-out code.
+- Do document the non-obvious: concurrency safety, cleanup requirements (`Close`), returned sentinel
+  errors, and invariants.
+- Group short related methods and interface methods with no blank lines between them:
+
+  ```go
+  func (s Secret) String() string   { return s.mask() }
+  func (s Secret) GoString() string { return s.mask() }
+  ```
 - `TODO(username): ...` must reference an issue for anything that outlives the PR.
 - Design decisions that are not obvious from the code go in `docs/` (short ADR-style notes).
 

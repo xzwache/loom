@@ -29,7 +29,6 @@ linters:
       require-specific: true
     revive:
       rules:
-        - name: exported
         - name: package-comments
         - name: context-as-argument
         - name: error-strings

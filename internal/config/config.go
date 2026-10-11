@@ -21,20 +21,13 @@ const (
 	EnvModel  = "LOOM_MODEL"
 )
 
-// Config is the complete set of loom settings.
 type Config struct {
-	// Model is the model ID sent to the provider.
-	Model string `json:"model"`
-	// MaxTokens caps the output tokens of a single model response.
-	MaxTokens int `json:"max_tokens"`
-	// MaxTurns caps the model calls in one run.
-	MaxTurns int `json:"max_turns"`
-	// APIKey authenticates with the provider. It is read from the
-	// environment only, never from config files.
-	APIKey Secret `json:"-"`
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens"`
+	MaxTurns  int    `json:"max_turns"`
+	APIKey    Secret `json:"-"`
 }
 
-// Default returns the built-in configuration.
 func Default() Config {
 	return Config{
 		Model:     "claude-sonnet-5-5",
@@ -43,9 +36,6 @@ func Default() Config {
 	}
 }
 
-// DefaultPaths returns the config files Load reads by default, lowest
-// precedence first: the user file, the project file, and the project's
-// uncommitted local file.
 func DefaultPaths(configHome, workdir string) []string {
 	return []string{
 		filepath.Join(configHome, "loom", "config.json"),
@@ -54,9 +44,6 @@ func DefaultPaths(configHome, workdir string) []string {
 	}
 }
 
-// Load builds a Config from the defaults, the files in paths (missing files
-// are skipped), and the environment as seen through getenv. The result is
-// validated.
 func Load(paths []string, getenv func(string) string) (Config, error) {
 	cfg := Default()
 	for _, p := range paths {
@@ -76,8 +63,6 @@ func Load(paths []string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-// mergeFile decodes the JSON file at path over cfg. Fields absent from the
-// file keep their current values.
 func mergeFile(cfg *Config, path string) error {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: config paths are chosen by the user on purpose
 	if errors.Is(err, fs.ErrNotExist) {
@@ -94,7 +79,6 @@ func mergeFile(cfg *Config, path string) error {
 	return nil
 }
 
-// Validate reports every invalid setting in c.
 func (c Config) Validate() error {
 	var errs []error
 	if c.Model == "" {

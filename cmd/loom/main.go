@@ -13,10 +13,8 @@ import (
 	"github.com/xzwache/loom/internal/config"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
-// Exit codes.
 const (
 	exitOK    = 0
 	exitError = 1
@@ -32,8 +30,6 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Getenv, workdir))
 }
 
-// run executes loom with the given arguments and environment and returns the
-// process exit code. It never calls os.Exit, so tests can drive it directly.
 func run(args []string, stdout, stderr io.Writer, getenv func(string) string, workdir string) int {
 	fs := flag.NewFlagSet("loom", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -76,8 +72,6 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string, wo
 	return exitUsage
 }
 
-// configHome returns the base directory for user config files, following the
-// XDG convention on every platform.
 func configHome(getenv func(string) string) string {
 	if dir := getenv("XDG_CONFIG_HOME"); dir != "" {
 		return dir
