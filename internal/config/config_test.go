@@ -35,13 +35,15 @@ func TestLoad(t *testing.T) {
 		want  Config
 	}{
 		{
-			name: "defaults only",
-			want: Default(),
+			name: "defaults plus model from env",
+			env:  map[string]string{EnvModel: "env-model"},
+			want: Config{Model: "env-model", MaxTokens: Default().MaxTokens, MaxTurns: Default().MaxTurns},
 		},
 		{
 			name:  "missing file is skipped",
 			paths: []string{missing},
-			want:  Default(),
+			env:   map[string]string{EnvModel: "env-model"},
+			want:  Config{Model: "env-model", MaxTokens: Default().MaxTokens, MaxTurns: Default().MaxTurns},
 		},
 		{
 			name:  "later files override earlier ones field by field",
@@ -97,7 +99,7 @@ func TestValidateReportsAllErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Config{}.Validate() = nil, want error")
 	}
-	for _, want := range []string{"model is empty", "max_tokens", "max_turns"} {
+	for _, want := range []string{"model is not set", "max_tokens", "max_turns"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Config{}.Validate() = %q, want it to mention %q", err, want)
 		}

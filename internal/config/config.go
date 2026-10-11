@@ -30,8 +30,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		Model:     "claude-sonnet-5-5",
-		MaxTokens: 8192,
+		MaxTokens: 16000,
 		MaxTurns:  50,
 	}
 }
@@ -82,7 +81,7 @@ func mergeFile(cfg *Config, path string) error {
 func (c Config) Validate() error {
 	var errs []error
 	if c.Model == "" {
-		errs = append(errs, errors.New("model is empty"))
+		errs = append(errs, errors.New(`model is not set; set "model" in a config file or `+EnvModel))
 	}
 	if c.MaxTokens <= 0 {
 		errs = append(errs, fmt.Errorf("max_tokens must be positive, got %d", c.MaxTokens))

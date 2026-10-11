@@ -15,7 +15,7 @@ func TestRun(t *testing.T) {
 	if err := os.WriteFile(bad, []byte(`{"max_turns": -1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"HOME": home, "ANTHROPIC_API_KEY": "sk-secret"}
+	env := map[string]string{"HOME": home, "ANTHROPIC_API_KEY": "sk-secret", "LOOM_MODEL": "test-model"}
 	getenv := func(k string) string { return env[k] }
 
 	tests := []struct {
