@@ -18,7 +18,7 @@ Google's order of priorities for readable code applies to every decision:
 
 ## 1. Toolchain
 
-- Go version: the one pinned in `go.mod` (currently 1.25). No language features newer than that.
+- Go version: the one pinned in `go.mod` (currently 1.26). No language features newer than that.
 - Formatting: `gofmt` (via `gofumpt`) and `goimports`. Unformatted code does not get merged.
 - Linting: `golangci-lint` with the repository config. CI fails on any finding.
   A `//nolint:<linter> // reason` needs the specific linter and a reason.
