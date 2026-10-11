@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.80.0
+	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/google/go-cmp v0.7.0
 )
 

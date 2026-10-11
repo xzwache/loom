@@ -13,6 +13,7 @@ import (
 
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/tool"
+	"github.com/xzwache/loom/internal/tool/bash"
 )
 
 func TestAgentCreatesFile(t *testing.T) {
@@ -21,12 +22,16 @@ func TestAgentCreatesFile(t *testing.T) {
 		t.Skip("ANTHROPIC_API_KEY and LOOM_MODEL must be set")
 	}
 	dir := t.TempDir()
+	tools, err := tool.NewRegistry(&bash.Tool{Dir: dir, Timeout: 30 * time.Second, MaxOutput: 10_000})
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &Agent{
 		Model:     llm.NewAnthropic(llm.AnthropicOptions{APIKey: key, Timeout: 2 * time.Minute, MaxRetries: 2}),
 		ModelID:   model,
 		System:    "You are a coding agent working in " + dir + ".",
 		MaxTokens: 4096,
-		Tools:     []tool.Tool{&tool.Bash{Dir: dir, Timeout: 30 * time.Second, MaxOutput: 10_000}},
+		Tools:     tools,
 		Budget:    Budget{MaxTurns: 6, MaxDuration: 3 * time.Minute},
 		Log:       slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
