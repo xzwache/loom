@@ -136,3 +136,40 @@ func TestRunTaskIncomplete(t *testing.T) {
 		t.Errorf("stderr = %q, want the stop reason", te.stderr)
 	}
 }
+
+func TestRunTaskTrace(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "bash", Input: json.RawMessage(`{"command":"echo sk-secret"}`)}),
+		llmtest.TextReply("done"),
+	)
+
+	if code := run(context.Background(), []string{"-p", "hi", "-trace", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d, want %d; stderr: %s", code, exitOK, te.stderr)
+	}
+	files, err := filepath.Glob(filepath.Join(te.workdir, ".loom", "runs", "*.jsonl"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("trace files = %v, %v; want one", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "sk-secret") {
+		t.Error("trace contains the API key")
+	}
+	var names []string
+	for line := range strings.Lines(string(data)) {
+		var rec struct {
+			Event string `json:"event"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("trace line is not JSON: %v\n%s", err, line)
+		}
+		names = append(names, rec.Event)
+	}
+	want := "SessionStart UserPromptSubmit ModelRequest ModelResponse PreToolUse PostToolUse PostToolBatch " +
+		"ModelRequest ModelResponse Stop SessionEnd"
+	if got := strings.Join(names, " "); got != want {
+		t.Errorf("trace events =\n%s\nwant\n%s", got, want)
+	}
+}

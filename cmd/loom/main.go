@@ -71,6 +71,7 @@ func run(ctx context.Context, args []string, e env) int {
 	task := fs.String("p", "", "run this task without interaction and print the result")
 	jsonOut := fs.Bool("json", false, "with -p, print the result as JSON")
 	quiet := fs.Bool("quiet", false, "log only warnings and errors")
+	traceRun := fs.Bool("trace", false, "with -p, record every event to .loom/runs/<run-id>.jsonl")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -118,7 +119,7 @@ func run(ctx context.Context, args []string, e env) int {
 		level = slog.LevelWarn
 	}
 	log := slog.New(slog.NewTextHandler(e.stderr, &slog.HandlerOptions{Level: level}))
-	return runTask(ctx, cfg, *task, *jsonOut, log, e)
+	return runTask(ctx, cfg, taskOptions{task: *task, jsonOut: *jsonOut, trace: *traceRun}, log, e)
 }
 
 func configHome(getenv func(string) string) string {

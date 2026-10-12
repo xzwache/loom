@@ -11,7 +11,7 @@ internal/llm        loom message types, Provider interface, anthropic impl
 internal/llm/llmtest scripted fake provider for hermetic tests
 internal/agent      the loop: stop_reason switch, budgets, dispatch, Agent spec (also used for subagents)
 internal/tool       Tool interface, Registry, builtin/{bash,read,write,edit,glob}
-internal/event      typed lifecycle events: UserPromptSubmit, PreToolUse, PostToolUse, Stop, PreCompact
+internal/event      typed lifecycle events, versioned (see Events below)
 internal/hook       hook chain over events: allow / deny / modify / continue decisions
 internal/permission rules (allow/deny/ask by tool + pattern), registered as a PreToolUse hook
 internal/prompt     system prompt built from ordered sections (stable prefix)
@@ -38,7 +38,8 @@ The two seams that the later features depend on:
 | 1 | `llm`: message types, Provider, Anthropic impl, fake provider, retries | s01 | Fake-provider tests; one integration test with a real key |
 | 2 | `agent` loop with the `bash` tool, stop_reason handling, budgets, headless mode | s01 | `loom -p "..."` solves a small task |
 | 3 | `tool` registry + read/write/edit/glob, output truncation, path safety | s02 | Each tool table-tested |
-| 4 | `event` + `hook` chain, `trace` as a subscriber | s04 | Trace JSONL shows every step |
+| 4 | `event` catalog + `hook` chain, `trace` as a subscriber | s04 | Trace JSONL shows every step |
+| 4b | Command hooks compatible with Claude Code (JSON on stdin/stdout, exit 2 blocks) | — | An existing Claude Code hook script works unchanged |
 | 5 | `permission` rules as a PreToolUse hook, ask prompt in interactive mode | s03 | Denied call returns an `is_error` result, and the denial is in the trace |
 | 6 | `prompt` sections + `todo` tool and reminder | s05 | Reminder fires after N turns without a todo update |
 | 7 | Subagents: `task` tool spawning an Agent with a tool subset and budget | s06 | Parent receives one summary; no recursion |
@@ -48,3 +49,32 @@ The two seams that the later features depend on:
 | 11 | `task` graph + tools | s10 | Dependency order and cycle rejection tested |
 
 Steps 4–5 come before 6–11 on purpose: everything after them is built on hooks.
+
+## Events
+
+The whole catalog is defined in step 4 (`event.SchemaVersion` = 1); each event is fired once
+the feature behind it exists. Names and JSON fields follow Claude Code hooks where one exists,
+so the step 4b adapter maps them one to one. Loom-only events are marked *.
+
+| Group | Events | Fired since |
+|---|---|---|
+| Session | `SessionStart`, `SessionEnd` | 4 |
+| Turn | `UserPromptSubmit`, `Stop`, `StopFailure` | 4 |
+| Model | `ModelRequest`*, `ModelResponse`* | 4 |
+| Tools | `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch` | 4 |
+| Budget | `BudgetExceeded`* | 4 |
+| Permissions | `PermissionDenied` (4), `PermissionRequest` (5) | 4–5 |
+| Prompt, todo | `InstructionsLoaded`, `TodoUpdated`* | 6 |
+| Subagents | `SubagentStart`, `SubagentStop` | 7 |
+| Skills | `SkillLoaded`*, `SkillUsed`* | 8 |
+| Compaction | `PreCompact`, `PostCompact` | 9 |
+| Memory | `MemoryRead`*, `MemoryWrite`* | 10 |
+| Tasks | `TaskCreated`, `TaskCompleted` | 11 |
+| Display | `Notification`, `MessageDisplay` | interactive mode |
+| Environment | `ConfigChange`, `FileChanged`, `CwdChanged` | later |
+| Model switch | `PreModelSwitch`, `PostModelSwitch` | later |
+
+A hook returns an `Outcome`: a decision (allow / ask / deny), a rewritten tool input or output,
+additional context for the model, `Block` (on `Stop`: keep going) or `Halt` (end the run).
+Hooks run in registration order and later hooks see earlier rewrites; deny and halt stop the
+chain. A failing hook is logged and skipped, except on `PreToolUse`, where it denies the call.

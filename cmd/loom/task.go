@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"time"
 
 	"github.com/xzwache/loom/internal/agent"
 	"github.com/xzwache/loom/internal/config"
+	"github.com/xzwache/loom/internal/event"
+	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/tool"
 	"github.com/xzwache/loom/internal/tool/bash"
@@ -15,6 +19,7 @@ import (
 	"github.com/xzwache/loom/internal/tool/glob"
 	"github.com/xzwache/loom/internal/tool/read"
 	"github.com/xzwache/loom/internal/tool/write"
+	"github.com/xzwache/loom/internal/trace"
 )
 
 type taskOutput struct {
@@ -24,7 +29,13 @@ type taskOutput struct {
 	Usage llm.Usage        `json:"usage"`
 }
 
-func runTask(ctx context.Context, cfg config.Config, task string, jsonOut bool, log *slog.Logger, e env) int {
+type taskOptions struct {
+	task    string
+	jsonOut bool
+	trace   bool
+}
+
+func runTask(ctx context.Context, cfg config.Config, opts taskOptions, log *slog.Logger, e env) int {
 	ws, err := tool.OpenFileSystemWorkspace(e.workdir)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
@@ -43,10 +54,29 @@ func runTask(ctx context.Context, cfg config.Config, task string, jsonOut bool, 
 		return exitError
 	}
 
+	hooks := &hook.Chain{}
+	if opts.trace {
+		closeTrace, err := startTrace(hooks, ws.Dir(), cfg, log)
+		if err != nil {
+			fmt.Fprintf(e.stderr, "loom: %v\n", err)
+			return exitError
+		}
+		defer closeTrace()
+	}
+
+	system := systemPrompt(ws.Dir())
+	start, err := hooks.Fire(ctx, event.SessionStart{Source: "startup", Model: cfg.Model, Cwd: ws.Dir()})
+	if err != nil {
+		log.Warn("hook failed", "event", "SessionStart", "error", err)
+	}
+	if start.AdditionalContext != "" {
+		system += "\n\n" + start.AdditionalContext
+	}
+
 	a := &agent.Agent{
 		Model:     e.newModel(cfg),
 		ModelID:   cfg.Model,
-		System:    systemPrompt(ws.Dir()),
+		System:    system,
 		MaxTokens: cfg.MaxTokens,
 		Tools:     tools,
 		Budget: agent.Budget{
@@ -54,16 +84,24 @@ func runTask(ctx context.Context, cfg config.Config, task string, jsonOut bool, 
 			MaxTokens:   cfg.MaxRunTokens,
 			MaxDuration: cfg.MaxDuration.Std(),
 		},
-		Log: log,
+		Hooks: hooks,
+		Log:   log,
 	}
 
-	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: task}}}})
+	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: opts.task}}}})
+	endReason := string(res.Stop)
+	if err != nil {
+		endReason = "error"
+	}
+	if _, err := hooks.Fire(context.WithoutCancel(ctx), event.SessionEnd{Reason: endReason}); err != nil {
+		log.Warn("hook failed", "event", "SessionEnd", "error", err)
+	}
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
 		return exitError
 	}
 
-	if jsonOut {
+	if opts.jsonOut {
 		out := taskOutput{Stop: res.Stop, Text: res.Text, Turns: res.Turns, Usage: res.Usage}
 		if err := json.NewEncoder(e.stdout).Encode(out); err != nil {
 			fmt.Fprintf(e.stderr, "loom: %v\n", err)
@@ -81,10 +119,29 @@ func runTask(ctx context.Context, cfg config.Config, task string, jsonOut bool, 
 		return exitOK
 	case agent.StopCancelled:
 		return exitInterrupted
+	case agent.StopHalted:
+		fmt.Fprintf(e.stderr, "loom: stopped by a hook: %s\n", res.Detail)
+		return exitIncomplete
 	default:
 		fmt.Fprintf(e.stderr, "loom: stopped before finishing: %s\n", res.Stop)
 		return exitIncomplete
 	}
+}
+
+// startTrace records every event to .loom/runs/<run-id>.jsonl in workdir.
+func startTrace(hooks *hook.Chain, workdir string, cfg config.Config, log *slog.Logger) (func(), error) {
+	runID := trace.NewRunID(time.Now())
+	f, err := trace.Create(filepath.Join(workdir, ".loom", "runs"), runID)
+	if err != nil {
+		return nil, err
+	}
+	hooks.OnAll(trace.New(f, runID, cfg.APIKey.Reveal()))
+	log.Info("trace", "path", f.Name())
+	return func() {
+		if err := f.Close(); err != nil {
+			log.Warn("trace", "error", err)
+		}
+	}, nil
 }
 
 func systemPrompt(workdir string) string {
