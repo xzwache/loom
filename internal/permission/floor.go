@@ -1,30 +1,77 @@
 package permission
 
 import (
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
-var forkBomb = regexp.MustCompile(`(\w+|:)\s*\(\s*\)\s*\{[^}]*(\w+|:)\s*\|\s*(\w+|:)\s*&`)
+//go:embed floor_rules.json
+var builtinFloorRules []byte
 
-var protectedDirs = map[string]bool{
-	"/": true, "/*": true, "~": true, "~/": true, "~/*": true, "$HOME": true, "${HOME}": true,
-	"/bin": true, "/boot": true, "/dev": true, "/etc": true, "/home": true, "/lib": true, "/Library": true,
-	"/opt": true, "/sbin": true, "/System": true, "/usr": true, "/Users": true, "/var": true,
+type FloorRules struct {
+	BlockedCommands []BlockedCommand `json:"blocked_commands,omitempty"`
+	// ProtectedPaths may not be deleted with rm -r.
+	ProtectedPaths []string `json:"protected_paths,omitempty"`
+	// DevicePrefixes may not be written with dd or a redirect.
+	DevicePrefixes []string `json:"device_prefixes,omitempty"`
 }
 
-var devicePrefixes = []string{"/dev/sd", "/dev/hd", "/dev/nvme", "/dev/disk", "/dev/mmcblk", "/dev/vd"}
+// BlockedCommand uses the same command syntax as a Bash rule.
+type BlockedCommand struct {
+	Command string `json:"command"`
+	Reason  string `json:"reason"`
+}
 
-// floor returns why src must never run, in any mode and whatever the rules
-// say, or "" when it may.
-func floor(src string, cmds []command) string {
+type floor struct {
+	blocked   []blockedCommand
+	protected map[string]bool
+	devices   []string
+}
+
+type blockedCommand struct {
+	pattern *regexp.Regexp
+	reason  string
+}
+
+var forkBomb = regexp.MustCompile(`(\w+|:)\s*\(\s*\)\s*\{[^}]*(\w+|:)\s*\|\s*(\w+|:)\s*&`)
+
+func newFloor(extra FloorRules) (*floor, error) {
+	var rules FloorRules
+	if err := json.Unmarshal(builtinFloorRules, &rules); err != nil {
+		return nil, fmt.Errorf("built-in floor rules: %w", err)
+	}
+	f := &floor{protected: map[string]bool{}}
+	for _, b := range slices.Concat(rules.BlockedCommands, extra.BlockedCommands) {
+		if strings.TrimSpace(b.Command) == "" {
+			return nil, errors.New("floor rule with an empty command")
+		}
+		reason := b.Reason
+		if reason == "" {
+			reason = "matches floor rule " + b.Command
+		}
+		f.blocked = append(f.blocked, blockedCommand{pattern: commandPattern(b.Command), reason: reason})
+	}
+	for _, p := range slices.Concat(rules.ProtectedPaths, extra.ProtectedPaths) {
+		f.protected[p] = true
+	}
+	f.devices = slices.Concat(rules.DevicePrefixes, extra.DevicePrefixes)
+	return f, nil
+}
+
+// check returns why src must never run, or "" when it may.
+func (f *floor) check(src string, cmds []command) string {
 	if forkBomb.MatchString(src) {
 		return "fork bomb"
 	}
 	for _, c := range cmds {
 		for _, t := range c.writes {
-			if isDevice(t) {
+			if f.isDevice(t) {
 				return "writes to a disk device"
 			}
 		}
@@ -32,20 +79,18 @@ func floor(src string, cmds []command) string {
 		if len(words) == 0 {
 			continue
 		}
+		text := strings.Join(words, " ")
+		for _, b := range f.blocked {
+			if b.pattern.MatchString(text) {
+				return b.reason
+			}
+		}
 		name, args := words[0], words[1:]
 		switch {
-		case name == "rm" && recursive(args) && anyProtected(args):
-			return "recursive delete of a system or home directory"
-		case name == "mkfs" || strings.HasPrefix(name, "mkfs."):
-			return "formats a file system"
-		case name == "dd" && anyPrefix(args, "of=/dev/"):
+		case name == "rm" && recursive(args) && f.anyProtected(args):
+			return "recursive delete of a protected directory"
+		case name == "dd" && f.anyDevice(args):
 			return "writes to a disk device"
-		case name == "shutdown" || name == "reboot" || name == "halt" || name == "poweroff":
-			return "shuts down the machine"
-		case name == "init" && len(args) > 0 && (args[0] == "0" || args[0] == "6"):
-			return "shuts down the machine"
-		case name == "kill" && len(args) > 0 && args[len(args)-1] == "-1":
-			return "kills every process"
 		}
 	}
 	return ""
@@ -77,29 +122,29 @@ func recursive(args []string) bool {
 	return false
 }
 
-func anyProtected(args []string) bool {
+func (f *floor) anyProtected(args []string) bool {
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
 			continue
 		}
-		if protectedDirs[a] || (strings.HasPrefix(a, "/") && protectedDirs[path.Clean(a)]) {
+		if f.protected[a] || (strings.HasPrefix(a, "/") && f.protected[path.Clean(a)]) {
 			return true
 		}
 	}
 	return false
 }
 
-func anyPrefix(args []string, prefix string) bool {
+func (f *floor) anyDevice(args []string) bool {
 	for _, a := range args {
-		if strings.HasPrefix(a, prefix) {
+		if target, ok := strings.CutPrefix(a, "of="); ok && f.isDevice(target) {
 			return true
 		}
 	}
 	return false
 }
 
-func isDevice(target string) bool {
-	for _, p := range devicePrefixes {
+func (f *floor) isDevice(target string) bool {
+	for _, p := range f.devices {
 		if strings.HasPrefix(target, p) {
 			return true
 		}

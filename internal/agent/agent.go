@@ -26,7 +26,7 @@ type Agent struct {
 	Tools     *tool.Registry
 	MaxTokens int
 	Budget    Budget
-	Hooks     *hook.Chain
+	Hooks     *hook.Pipeline
 	Log       *slog.Logger
 }
 
@@ -63,8 +63,8 @@ type Result struct {
 
 var errTimeBudget = errors.New("time budget exceeded")
 
-// run holds the state of one Run.
-type run struct {
+// runState holds the state of one Run.
+type runState struct {
 	agent      *Agent
 	log        *slog.Logger
 	tools      *tool.Registry
@@ -83,13 +83,13 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 		return Result{}, errors.New("agent has no model")
 	}
 
-	r := &run{agent: a, log: a.Log, tools: a.Tools, start: time.Now()}
-	if r.tools == nil {
-		r.tools, _ = tool.NewRegistry()
+	rs := &runState{agent: a, log: a.Log, tools: a.Tools, start: time.Now()}
+	if rs.tools == nil {
+		rs.tools, _ = tool.NewRegistry()
 	}
-	r.specs = r.tools.Specs()
-	if r.log == nil {
-		r.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	rs.specs = rs.tools.Specs()
+	if rs.log == nil {
+		rs.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	if a.Budget.MaxDuration > 0 {
 		var cancel context.CancelFunc
@@ -98,20 +98,20 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	}
 
 	res := Result{Messages: slices.Clone(messages)}
-	err := r.loop(ctx, &res)
+	err := rs.loop(ctx, &res)
 	if res.Stop == StopHalted {
-		res.Detail = r.haltReason
+		res.Detail = rs.haltReason
 	}
-	r.finish(context.WithoutCancel(ctx), res, err)
+	rs.finish(context.WithoutCancel(ctx), res, err)
 	return res, err
 }
 
-func (r *run) loop(ctx context.Context, res *Result) error {
-	a := r.agent
+func (rs *runState) loop(ctx context.Context, res *Result) error {
+	a := rs.agent
 	if len(res.Messages) > 0 {
-		out := r.fire(ctx, event.UserPromptSubmit{Prompt: text(res.Messages[len(res.Messages)-1].Content)})
-		if out.Block || r.halted {
-			r.halt(out.Reason)
+		out := rs.fire(ctx, event.UserPromptSubmit{Prompt: text(res.Messages[len(res.Messages)-1].Content)})
+		if out.Block || rs.halted {
+			rs.halt(out.Reason)
 			res.Stop = StopHalted
 			return nil
 		}
@@ -129,8 +129,8 @@ func (r *run) loop(ctx context.Context, res *Result) error {
 			return nil
 		}
 
-		r.fire(ctx, event.ModelRequest{Turn: res.Turns + 1, Model: a.ModelID, MessageCount: len(res.Messages), ToolCount: len(r.specs)})
-		if r.halted {
+		rs.fire(ctx, event.ModelRequest{Turn: res.Turns + 1, Model: a.ModelID, MessageCount: len(res.Messages), ToolCount: len(rs.specs)})
+		if rs.halted {
 			res.Stop = StopHalted
 			return nil
 		}
@@ -138,7 +138,7 @@ func (r *run) loop(ctx context.Context, res *Result) error {
 			Model:     a.ModelID,
 			System:    a.System,
 			Messages:  res.Messages,
-			Tools:     r.specs,
+			Tools:     rs.specs,
 			MaxTokens: a.MaxTokens,
 		})
 		if err != nil {
@@ -150,14 +150,14 @@ func (r *run) loop(ctx context.Context, res *Result) error {
 		}
 		res.Turns++
 		res.Usage = res.Usage.Add(resp.Usage)
-		r.log.Info("model", "turn", res.Turns, "stop", resp.StopReason,
+		rs.log.Info("model", "turn", res.Turns, "stop", resp.StopReason,
 			"input_tokens", resp.Usage.InputTokens, "output_tokens", resp.Usage.OutputTokens,
 			"cache_read_tokens", resp.Usage.CacheReadTokens)
 		if len(resp.Content) > 0 {
 			res.Messages = append(res.Messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
 		}
-		r.fire(ctx, modelResponse(res.Turns, resp))
-		if r.halted {
+		rs.fire(ctx, modelResponse(res.Turns, resp))
+		if rs.halted {
 			skipTools(res, resp.Content, "not run: a hook stopped the run")
 			res.Stop = StopHalted
 			return nil
@@ -169,8 +169,8 @@ func (r *run) loop(ctx context.Context, res *Result) error {
 		case llm.StopPauseTurn:
 			continue
 		case llm.StopToolUse:
-			res.Messages = append(res.Messages, r.runTools(ctx, resp.Content))
-			if r.halted {
+			res.Messages = append(res.Messages, rs.runTools(ctx, resp.Content))
+			if rs.halted {
 				res.Stop = StopHalted
 				return nil
 			}
@@ -192,8 +192,8 @@ func (r *run) loop(ctx context.Context, res *Result) error {
 		skipTools(res, resp.Content, "not run: the response ended with "+string(resp.StopReason))
 		res.Text = text(resp.Content)
 		if res.Stop == StopDone {
-			out := r.fire(ctx, event.Stop{StopHookActive: stopHookActive, LastAssistantMessage: res.Text})
-			if out.Block && !r.halted {
+			out := rs.fire(ctx, event.Stop{StopHookActive: stopHookActive, LastAssistantMessage: res.Text})
+			if out.Block && !rs.halted {
 				stopHookActive = true
 				reason := out.Reason
 				if reason == "" {
@@ -209,49 +209,49 @@ func (r *run) loop(ctx context.Context, res *Result) error {
 
 // finish reports how the run ended. ctx must not be cancelled, so that
 // hooks still run after a timeout or interrupt.
-func (r *run) finish(ctx context.Context, res Result, err error) {
-	b := r.agent.Budget
+func (rs *runState) finish(ctx context.Context, res Result, err error) {
+	b := rs.agent.Budget
 	switch res.Stop {
 	case StopMaxTurns:
-		r.fire(ctx, event.BudgetExceeded{Budget: "turns", Limit: int64(b.MaxTurns), Used: int64(res.Turns)})
+		rs.fire(ctx, event.BudgetExceeded{Budget: "turns", Limit: int64(b.MaxTurns), Used: int64(res.Turns)})
 	case StopMaxRunTokens:
-		r.fire(ctx, event.BudgetExceeded{Budget: "tokens", Limit: int64(b.MaxTokens), Used: int64(res.Usage.Total())})
+		rs.fire(ctx, event.BudgetExceeded{Budget: "tokens", Limit: int64(b.MaxTokens), Used: int64(res.Usage.Total())})
 	case StopTimeout:
-		r.fire(ctx, event.BudgetExceeded{Budget: "duration_ms", Limit: b.MaxDuration.Milliseconds(), Used: time.Since(r.start).Milliseconds()})
+		rs.fire(ctx, event.BudgetExceeded{Budget: "duration_ms", Limit: b.MaxDuration.Milliseconds(), Used: time.Since(rs.start).Milliseconds()})
 	case StopDone, StopCancelled, StopTruncated, StopRefusal, StopContextFull, StopHalted:
 	}
 	if err != nil {
-		r.fire(ctx, event.StopFailure{Reason: "error", Error: err.Error()})
+		rs.fire(ctx, event.StopFailure{Reason: "error", Error: err.Error()})
 	} else if res.Stop != StopDone {
-		r.fire(ctx, event.StopFailure{Reason: string(res.Stop), Error: res.Detail})
+		rs.fire(ctx, event.StopFailure{Reason: string(res.Stop), Error: res.Detail})
 	}
 }
 
 // fire runs the hooks for e. A failing hook is logged and otherwise ignored.
-func (r *run) fire(ctx context.Context, e event.Event) hook.Outcome {
-	out, err := r.fireErr(ctx, e)
+func (rs *runState) fire(ctx context.Context, e event.Event) hook.Outcome {
+	out, err := rs.fireErr(ctx, e)
 	if err != nil {
-		r.log.Warn("hook failed", "event", e.Name(), "error", err)
+		rs.log.Warn("hook failed", "event", e.Name(), "error", err)
 	}
 	return out
 }
 
-func (r *run) fireErr(ctx context.Context, e event.Event) (hook.Outcome, error) {
-	out, err := r.agent.Hooks.Fire(ctx, e)
+func (rs *runState) fireErr(ctx context.Context, e event.Event) (hook.Outcome, error) {
+	out, err := rs.agent.Hooks.Fire(ctx, e)
 	if out.Halt {
-		r.halt(out.Reason)
+		rs.halt(out.Reason)
 	}
 	return out, err
 }
 
-func (r *run) halt(reason string) {
-	if r.halted {
+func (rs *runState) halt(reason string) {
+	if rs.halted {
 		return
 	}
-	r.halted = true
-	r.haltReason = reason
+	rs.halted = true
+	rs.haltReason = reason
 	if reason == "" {
-		r.haltReason = "stopped by a hook"
+		rs.haltReason = "stopped by a hook"
 	}
 }
 

@@ -1,0 +1,18 @@
+{
+  "blocked_commands": [
+    {"command": "mkfs*", "reason": "formats a file system"},
+    {"command": "shutdown *", "reason": "shuts down the machine"},
+    {"command": "reboot *", "reason": "shuts down the machine"},
+    {"command": "halt *", "reason": "shuts down the machine"},
+    {"command": "poweroff *", "reason": "shuts down the machine"},
+    {"command": "init 0", "reason": "shuts down the machine"},
+    {"command": "init 6", "reason": "shuts down the machine"},
+    {"command": "kill * -1", "reason": "kills every process"}
+  ],
+  "protected_paths": [
+    "/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}",
+    "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/Library", "/opt",
+    "/sbin", "/System", "/usr", "/Users", "/var"
+  ],
+  "device_prefixes": ["/dev/sd", "/dev/hd", "/dev/nvme", "/dev/disk", "/dev/mmcblk", "/dev/vd"]
+}

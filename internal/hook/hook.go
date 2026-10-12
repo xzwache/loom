@@ -46,25 +46,28 @@ type entry struct {
 	hook Hook
 }
 
-// Chain runs hooks in registration order. A nil Chain has no hooks.
-type Chain struct {
+// Pipeline runs hooks in registration order. A nil Pipeline has no hooks.
+type Pipeline struct {
 	entries []entry
 }
 
-func (c *Chain) OnAll(h Hook) { c.entries = append(c.entries, entry{hook: h}) }
+func (c *Pipeline) OnAll(h Hook) { c.entries = append(c.entries, entry{hook: h}) }
+func (c *Pipeline) OnEvent(name event.Name, h Hook) {
+	c.entries = append(c.entries, entry{name: name, hook: h})
+}
 
-func On[E event.Event](c *Chain, f func(ctx context.Context, e E) (Outcome, error)) {
+func On[E event.Event](c *Pipeline, f func(ctx context.Context, e E) (Outcome, error)) {
 	var zero E
-	c.entries = append(c.entries, entry{name: zero.Name(), hook: Func(func(ctx context.Context, e event.Event) (Outcome, error) {
+	c.OnEvent(zero.Name(), Func(func(ctx context.Context, e event.Event) (Outcome, error) {
 		return f(ctx, e.(E))
-	})})
+	}))
 }
 
 // Fire runs the hooks for e and merges their outcomes. Later hooks see the
 // input or output rewritten by earlier ones. Deny and Halt stop the chain.
 // A failing hook is skipped and its error is returned with the outcome of
 // the others.
-func (c *Chain) Fire(ctx context.Context, e event.Event) (Outcome, error) {
+func (c *Pipeline) Fire(ctx context.Context, e event.Event) (Outcome, error) {
 	var out Outcome
 	if c == nil {
 		return out, nil

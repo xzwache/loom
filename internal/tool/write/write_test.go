@@ -21,7 +21,7 @@ func TestWrite(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			got, err := tooltest.Call(t, w, map[string]any{"path": tt.path, "content": tt.content})
+			got, err := tooltest.Call(t, w, map[string]any{"file_path": tt.path, "content": tt.content})
 			if err != nil || got != tt.want {
 				t.Errorf("write(%s) = %q, %v; want %q", tt.path, got, err, tt.want)
 			}
@@ -35,8 +35,8 @@ func TestWrite(t *testing.T) {
 func TestWriteRejects(t *testing.T) {
 	w := &Tool{Workspace: tooltest.NewWorkspace(t, nil)}
 	for _, input := range []map[string]any{
-		{"path": "", "content": "x"},
-		{"path": "../escape.txt", "content": "x"},
+		{"file_path": "", "content": "x"},
+		{"file_path": "../escape.txt", "content": "x"},
 	} {
 		if _, err := tooltest.Call(t, w, input); err == nil {
 			t.Errorf("write(%v) error = nil, want error", input)

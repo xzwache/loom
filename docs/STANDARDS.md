@@ -162,9 +162,9 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
 ## 12. Git workflow
 
 - `main` is always green. All work goes through a branch and a PR, even solo.
-- Branches: `<type>/<short-topic>`, e.g. `feat/agent-loop`, `fix/tool-result-pairing`, `docs/standards`.
-- Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
-  `feat(agent): stop on max_tokens with reason`. Subject in imperative mood, ≤ 72 chars; the body explains why.
+- Branches: `<type>/<short-topic>` with a full-word type: `feature/`, `fix/`, `docs/`, `chore/`, `refactor/`,
+  e.g. `feature/hooks`, `fix/tool-result-pairing`, `docs/standards`.
+- Commit messages are short and plain, e.g. `adding permissions`; the body, if any, explains why.
 - Each commit builds and passes tests (small and self-contained, per Google's "small CLs").
   Target < 400 changed lines per PR, excluding generated files and test fixtures.
 - PR description: what, why, how it was tested, and anything a reviewer should look at first.

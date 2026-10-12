@@ -16,14 +16,14 @@ import (
 )
 
 // recordNames registers a hook on c that appends every event name to names.
-func recordNames(c *hook.Chain, names *[]event.Name) {
+func recordNames(c *hook.Pipeline, names *[]event.Name) {
 	c.OnAll(hook.Func(func(_ context.Context, e event.Event) (hook.Outcome, error) {
 		*names = append(*names, e.Name())
 		return hook.Outcome{}, nil
 	}))
 }
 
-func onPre(c *hook.Chain, out hook.Outcome, err error) {
+func onPre(c *hook.Pipeline, out hook.Outcome, err error) {
 	hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) { return out, err })
 }
 
@@ -36,7 +36,7 @@ func TestRunFiresEvents(t *testing.T) {
 		return "", errors.New("disk full")
 	}}
 	a := newAgent(t, model, echoTool(), failing)
-	a.Hooks = &hook.Chain{}
+	a.Hooks = &hook.Pipeline{}
 	var names []event.Name
 	recordNames(a.Hooks, &names)
 
@@ -100,7 +100,7 @@ func TestRunPreToolUse(t *testing.T) {
 			gotInput = ""
 			model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 			a := newAgent(t, model, recording)
-			a.Hooks = &hook.Chain{}
+			a.Hooks = &hook.Pipeline{}
 			onPre(a.Hooks, tt.out, tt.err)
 			var denied []event.PermissionDenied
 			hook.On(a.Hooks, func(_ context.Context, e event.PermissionDenied) (hook.Outcome, error) {
@@ -128,7 +128,7 @@ func TestRunPreToolUse(t *testing.T) {
 func TestRunPostToolUse(t *testing.T) {
 	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 	a := newAgent(t, model, echoTool())
-	a.Hooks = &hook.Chain{}
+	a.Hooks = &hook.Pipeline{}
 	hook.On(a.Hooks, func(_ context.Context, e event.PostToolUse) (hook.Outcome, error) {
 		short := strings.ToUpper(e.ToolResponse)
 		return hook.Outcome{UpdatedOutput: &short, AdditionalContext: "note"}, nil
@@ -146,7 +146,7 @@ func TestRunPostToolUse(t *testing.T) {
 func TestRunStopHookContinues(t *testing.T) {
 	model := llmtest.NewScripted(reply(llm.StopEndTurn, llm.Text{Text: "first"}), reply(llm.StopEndTurn, llm.Text{Text: "second"}))
 	a := newAgent(t, model)
-	a.Hooks = &hook.Chain{}
+	a.Hooks = &hook.Pipeline{}
 	var active []bool
 	hook.On(a.Hooks, func(_ context.Context, e event.Stop) (hook.Outcome, error) {
 		active = append(active, e.StopHookActive)
@@ -170,7 +170,7 @@ func TestRunUserPromptSubmit(t *testing.T) {
 	t.Run("additional context", func(t *testing.T) {
 		model := llmtest.NewScripted(reply(llm.StopEndTurn))
 		a := newAgent(t, model)
-		a.Hooks = &hook.Chain{}
+		a.Hooks = &hook.Pipeline{}
 		hook.On(a.Hooks, func(context.Context, event.UserPromptSubmit) (hook.Outcome, error) {
 			return hook.Outcome{AdditionalContext: "branch: main"}, nil
 		})
@@ -190,7 +190,7 @@ func TestRunUserPromptSubmit(t *testing.T) {
 	t.Run("block", func(t *testing.T) {
 		model := llmtest.NewScripted()
 		a := newAgent(t, model)
-		a.Hooks = &hook.Chain{}
+		a.Hooks = &hook.Pipeline{}
 		hook.On(a.Hooks, func(context.Context, event.UserPromptSubmit) (hook.Outcome, error) {
 			return hook.Outcome{Block: true, Reason: "contains a secret"}, nil
 		})
@@ -206,7 +206,7 @@ func TestRunUserPromptSubmit(t *testing.T) {
 func TestRunHalt(t *testing.T) {
 	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo"), use("t2", "echo")))
 	a := newAgent(t, model, echoTool())
-	a.Hooks = &hook.Chain{}
+	a.Hooks = &hook.Pipeline{}
 	onPre(a.Hooks, hook.Outcome{Halt: true, Reason: "out of disk"}, nil)
 	var failures []event.StopFailure
 	hook.On(a.Hooks, func(_ context.Context, e event.StopFailure) (hook.Outcome, error) {
@@ -233,7 +233,7 @@ func TestRunBudgetExceededEvent(t *testing.T) {
 	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")))
 	a := newAgent(t, model, echoTool())
 	a.Budget.MaxTurns = 1
-	a.Hooks = &hook.Chain{}
+	a.Hooks = &hook.Pipeline{}
 	var got []event.BudgetExceeded
 	hook.On(a.Hooks, func(_ context.Context, e event.BudgetExceeded) (hook.Outcome, error) {
 		got = append(got, e)
@@ -261,7 +261,7 @@ func TestRunPermissionRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 			a := newAgent(t, model, echoTool())
-			a.Hooks = &hook.Chain{}
+			a.Hooks = &hook.Pipeline{}
 			onPre(a.Hooks, hook.Outcome{Decision: hook.Ask, Reason: "risky"}, nil)
 			hook.On(a.Hooks, func(context.Context, event.PermissionRequest) (hook.Outcome, error) { return tt.out, nil })
 

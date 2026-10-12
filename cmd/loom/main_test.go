@@ -228,3 +228,22 @@ func writeFile(t *testing.T, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunHeadlessCommandHook(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "bash", Input: json.RawMessage(`{"command":"ls"}`)}),
+		llmtest.TextReply("ok"),
+	)
+	writeFile(t, filepath.Join(te.workdir, ".loom", "config.json"), `{"hooks": {"PreToolUse": [
+		{"matcher": "Bash", "hooks": [{"type": "command", "command": "grep -q '\"tool_name\":\"Bash\"' && echo 'no shell today' >&2 && exit 2"}]}
+	]}}`)
+
+	if code := run(context.Background(), []string{"-p", "hi", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d, want %d; stderr: %s", code, exitOK, te.stderr)
+	}
+	msgs := te.model.Requests()[1].Messages
+	result := msgs[len(msgs)-1].Content[0].(llm.ToolResult)
+	if !result.IsError || result.Content != "denied: no shell today" {
+		t.Errorf("tool result = %+v, want the hook's denial", result)
+	}
+}
