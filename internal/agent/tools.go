@@ -14,65 +14,65 @@ import (
 const logInputLimit = 200
 
 // runTools answers every tool use in content, in order, in one user message.
-func (r *run) runTools(ctx context.Context, content []llm.Block) llm.Message {
+func (rs *runState) runTools(ctx context.Context, content []llm.Block) llm.Message {
 	var results []llm.Block
 	var outcomes []event.ToolOutcome
 	for _, b := range content {
 		if use, ok := b.(llm.ToolUse); ok {
-			res := r.runTool(ctx, use)
+			res := rs.runTool(ctx, use)
 			results = append(results, res)
 			outcomes = append(outcomes, event.ToolOutcome{ToolUseID: use.ID, ToolName: use.Name, IsError: res.IsError})
 		}
 	}
-	if out := r.fire(ctx, event.PostToolBatch{Results: outcomes}); out.AdditionalContext != "" {
+	if out := rs.fire(ctx, event.PostToolBatch{Results: outcomes}); out.AdditionalContext != "" {
 		results = append(results, llm.Text{Text: out.AdditionalContext})
 	}
 	return llm.Message{Role: llm.RoleUser, Content: results}
 }
 
-func (r *run) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult {
-	if r.halted {
+func (rs *runState) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult {
+	if rs.halted {
 		return failed(use.ID, "not run: a hook stopped the run")
 	}
 	if ctx.Err() != nil {
 		return failed(use.ID, "not run: the run was stopped")
 	}
-	t, ok := r.tools.Get(use.Name)
+	t, ok := rs.tools.Get(use.Name)
 	if !ok {
 		return failed(use.ID, fmt.Sprintf("unknown tool %q", use.Name))
 	}
 
 	call := event.ToolCall{ToolUseID: use.ID, ToolName: use.Name, ToolInput: use.Input}
-	pre, err := r.fireErr(ctx, event.PreToolUse{ToolCall: call})
+	pre, err := rs.fireErr(ctx, event.PreToolUse{ToolCall: call})
 	switch {
 	case err != nil:
-		r.log.Warn("hook failed", "event", "PreToolUse", "error", err)
-		return r.deny(ctx, call, "a PreToolUse hook failed: "+err.Error())
-	case r.halted:
+		rs.log.Warn("hook failed", "event", "PreToolUse", "error", err)
+		return rs.deny(ctx, call, "a PreToolUse hook failed: "+err.Error())
+	case rs.halted:
 		return failed(use.ID, "not run: a hook stopped the run")
 	case pre.Decision == hook.Deny:
-		return r.deny(ctx, call, pre.Reason)
+		return rs.deny(ctx, call, pre.Reason)
 	case pre.Decision == hook.Ask:
-		req := r.fire(ctx, event.PermissionRequest{ToolCall: call})
+		req := rs.fire(ctx, event.PermissionRequest{ToolCall: call})
 		switch {
-		case r.halted:
+		case rs.halted:
 			return failed(use.ID, "not run: a hook stopped the run")
 		case req.Decision == hook.Deny:
-			return r.deny(ctx, call, req.Reason)
+			return rs.deny(ctx, call, req.Reason)
 		case req.Decision != hook.Allow:
-			return r.deny(ctx, call, "needs approval, and no one can approve it in this mode: "+pre.Reason)
+			return rs.deny(ctx, call, "needs approval, and no one can approve it in this mode: "+pre.Reason)
 		}
 	}
 	if pre.UpdatedInput != nil {
 		call.ToolInput = pre.UpdatedInput
 	}
 
-	out, err := r.exec(ctx, t, call)
+	out, err := rs.exec(ctx, t, call)
 	if err != nil {
-		post := r.fire(ctx, event.PostToolUseFailure{ToolCall: call, Error: err.Error()})
+		post := rs.fire(ctx, event.PostToolUseFailure{ToolCall: call, Error: err.Error()})
 		return failed(use.ID, withContext(err.Error(), post.AdditionalContext))
 	}
-	post := r.fire(ctx, event.PostToolUse{ToolCall: call, ToolResponse: out})
+	post := rs.fire(ctx, event.PostToolUse{ToolCall: call, ToolResponse: out})
 	if post.UpdatedOutput != nil {
 		out = *post.UpdatedOutput
 	}
@@ -82,23 +82,23 @@ func (r *run) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult {
 	return llm.ToolResult{ToolUseID: use.ID, Content: withContext(out, post.AdditionalContext)}
 }
 
-func (r *run) exec(ctx context.Context, t tool.Tool, call event.ToolCall) (out string, err error) {
+func (rs *runState) exec(ctx context.Context, t tool.Tool, call event.ToolCall) (out string, err error) {
 	start := time.Now()
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("tool %s panicked: %v", call.ToolName, p)
 		}
-		r.log.Info("tool", "name", call.ToolName, "input", tool.Truncate(string(call.ToolInput), logInputLimit),
+		rs.log.Info("tool", "name", call.ToolName, "input", tool.Truncate(string(call.ToolInput), logInputLimit),
 			"error", err != nil, "duration", time.Since(start).Round(time.Millisecond))
 	}()
 	return t.Run(ctx, call.ToolInput)
 }
 
-func (r *run) deny(ctx context.Context, call event.ToolCall, reason string) llm.ToolResult {
+func (rs *runState) deny(ctx context.Context, call event.ToolCall, reason string) llm.ToolResult {
 	if reason == "" {
 		reason = "blocked by a hook"
 	}
-	r.fire(ctx, event.PermissionDenied{ToolCall: call, Reason: reason})
+	rs.fire(ctx, event.PermissionDenied{ToolCall: call, Reason: reason})
 	return failed(call.ToolUseID, "denied: "+reason)
 }
 

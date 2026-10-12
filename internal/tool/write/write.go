@@ -23,10 +23,10 @@ func (t *Tool) Spec() llm.ToolSpec {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"path": {"type": "string", "description": "File path, relative to the working directory or absolute."},
+				"file_path": {"type": "string", "description": "File path, relative to the working directory or absolute."},
 				"content": {"type": "string", "description": "The complete new content of the file."}
 			},
-			"required": ["path", "content"],
+			"required": ["file_path", "content"],
 			"additionalProperties": false
 		}`),
 	}
@@ -34,7 +34,7 @@ func (t *Tool) Spec() llm.ToolSpec {
 
 func (t *Tool) Run(_ context.Context, input json.RawMessage) (string, error) {
 	var in struct {
-		Path    string `json:"path"`
+		Path    string `json:"file_path"`
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {

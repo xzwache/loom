@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 )
 
@@ -154,5 +155,29 @@ func TestLoadMergesPermissions(t *testing.T) {
 	bad := writeFile(t, dir, "bad.json", `{"permissions": {"deny": ["Glob(x)"]}}`)
 	if _, err := Load([]string{bad}, envFrom(map[string]string{EnvModel: "m"})); err == nil {
 		t.Error("Load with a bad rule: error = nil, want error")
+	}
+}
+
+func TestLoadMergesHooks(t *testing.T) {
+	dir := t.TempDir()
+	user := writeFile(t, dir, "user.json", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "a"}]}]}}`)
+	project := writeFile(t, dir, "project.json", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "b"}]}],
+		"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "c"}]}]}}`)
+
+	got, err := Load([]string{user, project}, envFrom(map[string]string{EnvModel: "m"}))
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	want := command.Settings{
+		"Stop":       {{Hooks: []command.Handler{{Type: "command", Command: "a"}}}, {Hooks: []command.Handler{{Type: "command", Command: "b"}}}},
+		"PreToolUse": {{Matcher: "Bash", Hooks: []command.Handler{{Type: "command", Command: "c"}}}},
+	}
+	if diff := cmp.Diff(want, got.Hooks); diff != "" {
+		t.Errorf("hooks mismatch (-want +got):\n%s", diff)
+	}
+
+	bad := writeFile(t, dir, "bad.json", `{"hooks": {"Nope": []}}`)
+	if _, err := Load([]string{bad}, envFrom(map[string]string{EnvModel: "m"})); err == nil {
+		t.Error("Load with an unknown hook event: error = nil, want error")
 	}
 }

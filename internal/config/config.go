@@ -16,6 +16,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 )
 
@@ -35,9 +36,12 @@ type Config struct {
 	MaxRetries     int      `json:"max_retries"`
 	BashTimeout    Duration `json:"bash_timeout"`
 	MaxToolOutput  int      `json:"max_tool_output"`
-	// Permission lists add up across files; the last file that sets mode wins.
+	// Permission lists and floor rules add up across files; the last file that
+	// sets mode wins.
 	Permissions permission.Settings `json:"permissions"`
-	APIKey      Secret              `json:"-"`
+	// Hooks from every file run; a file adds to the hooks of the files before it.
+	Hooks  command.Settings `json:"hooks,omitempty"`
+	APIKey Secret           `json:"-"`
 }
 
 func Default() Config {
@@ -89,8 +93,10 @@ func mergeFile(cfg *Config, path string) error {
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
-	before := cfg.Permissions
+	before, hooksBefore := cfg.Permissions, cfg.Hooks
+	cfg.Hooks = nil
 	cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny = nil, nil, nil
+	cfg.Permissions.Floor = permission.FloorRules{}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
@@ -99,6 +105,17 @@ func mergeFile(cfg *Config, path string) error {
 	cfg.Permissions.Allow = slices.Concat(before.Allow, cfg.Permissions.Allow)
 	cfg.Permissions.Ask = slices.Concat(before.Ask, cfg.Permissions.Ask)
 	cfg.Permissions.Deny = slices.Concat(before.Deny, cfg.Permissions.Deny)
+	cfg.Permissions.Floor = permission.FloorRules{
+		BlockedCommands: slices.Concat(before.Floor.BlockedCommands, cfg.Permissions.Floor.BlockedCommands),
+		ProtectedPaths:  slices.Concat(before.Floor.ProtectedPaths, cfg.Permissions.Floor.ProtectedPaths),
+		DevicePrefixes:  slices.Concat(before.Floor.DevicePrefixes, cfg.Permissions.Floor.DevicePrefixes),
+	}
+	for name, matchers := range hooksBefore {
+		if cfg.Hooks == nil {
+			cfg.Hooks = command.Settings{}
+		}
+		cfg.Hooks[name] = slices.Concat(matchers, cfg.Hooks[name])
+	}
 	return nil
 }
 
@@ -129,6 +146,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.Permissions.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("permissions: %w", err))
+	}
+	if err := c.Hooks.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("invalid config: %w", err)

@@ -94,19 +94,33 @@ func TestFloor(t *testing.T) {
 		"shutdown -h now",
 		"kill -9 -1",
 	}
+	f, err := newFloor(FloorRules{
+		BlockedCommands: []BlockedCommand{{Command: "terraform destroy *", Reason: "destroys infrastructure"}},
+		ProtectedPaths:  []string{"/srv"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked = append(blocked, "terraform destroy -auto-approve", "rm -rf /srv")
 	for _, src := range blocked {
 		cmds, err := parseCommands(src)
 		if err != nil {
 			t.Fatalf("parseCommands(%q) error: %v", src, err)
 		}
-		if floor(src, cmds) == "" {
+		if f.check(src, cmds) == "" {
 			t.Errorf("floor(%q) = allowed, want blocked", src)
 		}
 	}
-	for _, src := range []string{"rm -rf build", "rm -rf ./node_modules", "kill 123", "dd if=a of=b"} {
+	for _, src := range []string{"rm -rf build", "rm -rf ./node_modules", "kill 123", "dd if=a of=b", "terraform plan"} {
 		cmds, _ := parseCommands(src)
-		if reason := floor(src, cmds); reason != "" {
+		if reason := f.check(src, cmds); reason != "" {
 			t.Errorf("floor(%q) = %q, want allowed", src, reason)
 		}
+	}
+}
+
+func TestNewFloorRejectsEmptyCommand(t *testing.T) {
+	if _, err := newFloor(FloorRules{BlockedCommands: []BlockedCommand{{Reason: "x"}}}); err == nil {
+		t.Error("newFloor with an empty command: error = nil, want error")
 	}
 }

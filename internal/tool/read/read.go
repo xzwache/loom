@@ -32,11 +32,11 @@ func (t *Tool) Spec() llm.ToolSpec {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"path": {"type": "string", "description": "File path, relative to the working directory or absolute."},
+				"file_path": {"type": "string", "description": "File path, relative to the working directory or absolute."},
 				"offset": {"type": "integer", "minimum": 1, "description": "First line to read, starting at 1."},
 				"limit": {"type": "integer", "minimum": 1, "description": "Number of lines to read. Default 2000."}
 			},
-			"required": ["path"],
+			"required": ["file_path"],
 			"additionalProperties": false
 		}`),
 	}
@@ -44,7 +44,7 @@ func (t *Tool) Spec() llm.ToolSpec {
 
 func (t *Tool) Run(_ context.Context, input json.RawMessage) (string, error) {
 	var in struct {
-		Path   string `json:"path"`
+		Path   string `json:"file_path"`
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 	}

@@ -45,8 +45,9 @@ permission-modes, settings, sandboxing), pi (github.com/badlogic/pi-mono, `docs/
 - Known gaps: no project trust (a cloned repo's `.loom/config.json` is trusted), no OS sandbox, no smart/auto
   approval. All three are on the feature list.
 
-## Floor configuration (proposed)
+## Floor configuration
 
-The floor is Go code today (`internal/permission/floor.go`). If it becomes configuration, it may only be
-extended, never shrunk, or a cloned repo's config could remove protections. Deny rules already act as a
-user-defined floor: they apply in every mode, including `bypassPermissions`.
+The built-in floor lives in `internal/permission/floor_rules.json` (embedded in the binary): blocked commands
+in Bash rule syntax with a reason, protected paths for `rm -r`, and device prefixes. Config can only add to it,
+under `permissions.floor`, so a cloned repo's config cannot remove protections. Deny rules also apply in every
+mode, including `bypassPermissions`.

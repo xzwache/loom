@@ -12,7 +12,7 @@ internal/llm/llmtest scripted fake provider for hermetic tests
 internal/agent      the loop: stop_reason switch, budgets, dispatch, Agent spec (also used for subagents)
 internal/tool       Tool interface, Registry, builtin/{bash,read,write,edit,glob}
 internal/event      typed lifecycle events, versioned (see Events below)
-internal/hook       hook chain over events: allow / deny / modify / continue decisions
+internal/hook       Pipeline over events: allow / deny / modify / continue decisions
 internal/permission rules (allow/ask/deny by tool + pattern), modes, shell parsing, registered as a PreToolUse hook
 internal/prompt     system prompt built from ordered sections (stable prefix)
 internal/todo       todo tool + reminder (via a hook)
@@ -83,3 +83,36 @@ chain. A failing hook is logged and skipped, except on `PreToolUse`, where it de
 
 "Task" means only the step 11 task graph. A `-p` run is a headless run (`cmd/loom/headless.go`),
 and the subagent tool in step 7 is called `agent`.
+
+## Command hooks (step 4b)
+
+`"hooks"` in any config file uses Claude Code's format and adds to the hooks of earlier files:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "./check.sh", "timeout": 30}]}]}}
+```
+
+The script gets the event JSON on stdin with Claude Code's common fields (`hook_event_name`, `session_id`,
+`cwd`, `permission_mode`), built-in tool names capitalized (`Bash`) and `CLAUDE_PROJECT_DIR` set; the API key is
+removed from its environment. Exit 2 denies a tool call (or blocks, for other events) with stderr as the reason;
+exit 0 parses `continue`, `decision`, `hookSpecificOutput.permissionDecision`, `updatedInput`,
+`additionalContext` and `updatedToolOutput`; anything else is logged and ignored.
+
+Command hooks run before the permission policy, so a hook can tighten a decision but never loosen it: a
+script's `allow` does not skip a permission `ask`. To approve automatically, answer `PermissionRequest`.
+
+## Upcoming design work
+
+- **Session and conversation store.** Today the history is a `[]llm.Message` that `Agent.Run` takes and returns;
+  nothing keeps it except the trace. Planned: `internal/session` with a `Session` (id, append-only history,
+  usage, metadata) and a `Store` interface (in-memory, JSONL file) so runs can be resumed, forked and inspected.
+  Compaction (step 9) and subagents (step 7) build on it.
+- **App wiring.** `cmd/loom/headless.go` builds the workspace, tools, hook chain (trace → command hooks →
+  permission policy) and agent. That moves into one builder (e.g. `internal/app`) shared by headless mode and
+  the TUI, so both get identical behavior.
+- **TUI.** An interactive terminal UI (Bubble Tea): streaming output, tool calls and diffs, the permission prompt
+  as a `PermissionRequest` hook (once / session / always), and slash commands.
+- **Observability.** A sink abstraction fed by the hook chain (`OnAll`): the JSONL trace, structured logs,
+  OpenTelemetry spans and metrics, and per-run cost and cache-hit reports.
+- **Refactor `agent.loop`.** Split the ~100-line loop into small steps (budget check, model turn, stop-reason
+  handling) so methods stay short.

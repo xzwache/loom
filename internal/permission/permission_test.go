@@ -18,7 +18,7 @@ func bash(cmd string) json.RawMessage {
 }
 
 func file(path string) json.RawMessage {
-	in, _ := json.Marshal(map[string]string{"path": path})
+	in, _ := json.Marshal(map[string]string{"file_path": path})
 	return in
 }
 
@@ -163,7 +163,7 @@ func TestHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &hook.Chain{}
+	c := &hook.Pipeline{}
 	hook.On(c, p.Hook)
 	out, err := c.Fire(context.Background(), event.PreToolUse{ToolCall: event.ToolCall{ToolName: "bash", ToolInput: bash("git push")}})
 	if err != nil || out.Decision != hook.Deny || out.Reason != "denied by rule Bash(git push *)" {

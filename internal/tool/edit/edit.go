@@ -26,12 +26,12 @@ func (t *Tool) Spec() llm.ToolSpec {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"path": {"type": "string", "description": "File path, relative to the working directory or absolute."},
+				"file_path": {"type": "string", "description": "File path, relative to the working directory or absolute."},
 				"old_string": {"type": "string", "description": "The exact text to replace."},
 				"new_string": {"type": "string", "description": "The replacement text."},
 				"replace_all": {"type": "boolean", "description": "Replace every occurrence. Default false."}
 			},
-			"required": ["path", "old_string", "new_string"],
+			"required": ["file_path", "old_string", "new_string"],
 			"additionalProperties": false
 		}`),
 	}
@@ -39,7 +39,7 @@ func (t *Tool) Spec() llm.ToolSpec {
 
 func (t *Tool) Run(_ context.Context, input json.RawMessage) (string, error) {
 	var in struct {
-		Path       string `json:"path"`
+		Path       string `json:"file_path"`
 		OldString  string `json:"old_string"`
 		NewString  string `json:"new_string"`
 		ReplaceAll bool   `json:"replace_all"`

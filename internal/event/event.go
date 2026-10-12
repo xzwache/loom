@@ -213,6 +213,69 @@ type CwdChanged struct {
 	NewCwd string `json:"new_cwd"`
 }
 
+var catalog = []Event{
+	SessionStart{},
+	SessionEnd{},
+	UserPromptSubmit{},
+	Stop{},
+	StopFailure{},
+	ModelRequest{},
+	ModelResponse{},
+	PreModelSwitch{},
+	PostModelSwitch{},
+	BudgetExceeded{},
+	PreToolUse{},
+	PostToolUse{},
+	PostToolUseFailure{},
+	PostToolBatch{},
+	PermissionRequest{},
+	PermissionDenied{},
+	InstructionsLoaded{},
+	TodoUpdated{},
+	SkillLoaded{},
+	SkillUsed{},
+	MemoryRead{},
+	MemoryWrite{},
+	SubagentStart{},
+	SubagentStop{},
+	TaskCreated{},
+	TaskCompleted{},
+	PreCompact{},
+	PostCompact{},
+	Notification{},
+	MessageDisplay{},
+	ConfigChange{},
+	FileChanged{},
+	CwdChanged{},
+}
+
+func Known(name Name) bool {
+	for _, e := range catalog {
+		if e.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Tool returns the tool call an event is about, if any.
+func Tool(e Event) (ToolCall, bool) {
+	switch ev := e.(type) {
+	case PreToolUse:
+		return ev.ToolCall, true
+	case PostToolUse:
+		return ev.ToolCall, true
+	case PostToolUseFailure:
+		return ev.ToolCall, true
+	case PermissionRequest:
+		return ev.ToolCall, true
+	case PermissionDenied:
+		return ev.ToolCall, true
+	default:
+		return ToolCall{}, false
+	}
+}
+
 func (SessionStart) Name() Name       { return "SessionStart" }
 func (SessionEnd) Name() Name         { return "SessionEnd" }
 func (UserPromptSubmit) Name() Name   { return "UserPromptSubmit" }

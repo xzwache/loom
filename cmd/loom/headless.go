@@ -12,6 +12,7 @@ import (
 	"github.com/xzwache/loom/internal/config"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
+	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/tool"
@@ -55,9 +56,10 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		return exitError
 	}
 
-	hooks := &hook.Chain{}
+	runID := trace.NewRunID(time.Now())
+	hooks := &hook.Pipeline{}
 	if opts.trace {
-		closeTrace, err := startTrace(hooks, ws.Dir(), cfg, log)
+		closeTrace, err := startTrace(hooks, runID, ws.Dir(), cfg, log)
 		if err != nil {
 			fmt.Fprintf(e.stderr, "loom: %v\n", err)
 			return exitError
@@ -65,6 +67,16 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		defer closeTrace()
 	}
 
+	err = command.Register(hooks, cfg.Hooks, command.Env{
+		SessionID:      runID,
+		Dir:            ws.Dir(),
+		PermissionMode: string(cfg.Permissions.Mode),
+		Log:            log,
+	})
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
 	policy, err := permission.New(cfg.Permissions, ws.Dir(), e.getenv("HOME"))
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
@@ -139,8 +151,7 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 }
 
 // startTrace records every event to .loom/runs/<run-id>.jsonl in workdir.
-func startTrace(hooks *hook.Chain, workdir string, cfg config.Config, log *slog.Logger) (func(), error) {
-	runID := trace.NewRunID(time.Now())
+func startTrace(hooks *hook.Pipeline, runID, workdir string, cfg config.Config, log *slog.Logger) (func(), error) {
 	f, err := trace.Create(filepath.Join(workdir, ".loom", "runs"), runID)
 	if err != nil {
 		return nil, err

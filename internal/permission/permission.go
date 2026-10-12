@@ -25,10 +25,11 @@ const (
 )
 
 type Settings struct {
-	Mode  Mode     `json:"mode"`
-	Allow []string `json:"allow"`
-	Ask   []string `json:"ask"`
-	Deny  []string `json:"deny"`
+	Mode  Mode       `json:"mode"`
+	Allow []string   `json:"allow"`
+	Ask   []string   `json:"ask"`
+	Deny  []string   `json:"deny"`
+	Floor FloorRules `json:"floor"`
 }
 
 type Policy struct {
@@ -39,6 +40,7 @@ type Policy struct {
 	dir     string
 	realDir string
 	home    string
+	floor   *floor
 }
 
 // New builds a policy for a workspace rooted at dir. home expands "~/" in
@@ -66,6 +68,11 @@ func New(s Settings, dir, home string) (*Policy, error) {
 			*list.dst = append(*list.dst, r)
 		}
 	}
+	floor, err := newFloor(s.Floor)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	p.floor = floor
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -109,7 +116,7 @@ func (p *Policy) Check(tool string, input json.RawMessage) (hook.Decision, strin
 		return p.checkBash(input)
 	case "read", "edit", "write":
 		var in struct {
-			Path string `json:"path"`
+			Path string `json:"file_path"`
 		}
 		if err := json.Unmarshal(input, &in); err != nil {
 			return hook.Deny, "cannot read the tool input: " + err.Error()
@@ -145,7 +152,7 @@ func (p *Policy) checkBash(input json.RawMessage) (hook.Decision, string) {
 	if err != nil {
 		return p.decide(request{tool: "bash", match: func(r Rule, _ bool) bool { return r.spec == "" }})
 	}
-	if reason := floor(in.Command, cmds); reason != "" {
+	if reason := p.floor.check(in.Command, cmds); reason != "" {
 		return hook.Deny, "never allowed: " + reason
 	}
 

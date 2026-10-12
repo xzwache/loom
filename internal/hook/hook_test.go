@@ -19,7 +19,7 @@ func pre(input string) event.PreToolUse {
 
 func TestFireRunsMatchingHooksInOrder(t *testing.T) {
 	var got []string
-	c := &hook.Chain{}
+	c := &hook.Pipeline{}
 	c.OnAll(hook.Func(func(_ context.Context, e event.Event) (hook.Outcome, error) {
 		got = append(got, "all:"+string(e.Name()))
 		return hook.Outcome{}, nil
@@ -42,7 +42,7 @@ func TestFireRunsMatchingHooksInOrder(t *testing.T) {
 }
 
 func TestFireMergesOutcomes(t *testing.T) {
-	c := &hook.Chain{}
+	c := &hook.Pipeline{}
 	hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) {
 		return hook.Outcome{Decision: hook.Allow, UpdatedInput: json.RawMessage(`{"command":"ls"}`), AdditionalContext: "a"}, nil
 	})
@@ -67,7 +67,7 @@ func TestFireMergesOutcomes(t *testing.T) {
 
 func TestFireStopsAtDenyAndHalt(t *testing.T) {
 	for _, first := range []hook.Outcome{{Decision: hook.Deny, Reason: "no"}, {Halt: true, Reason: "stop"}} {
-		c := &hook.Chain{}
+		c := &hook.Pipeline{}
 		hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) { return first, nil })
 		ran := false
 		hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) {
@@ -83,7 +83,7 @@ func TestFireStopsAtDenyAndHalt(t *testing.T) {
 }
 
 func TestFireSkipsFailingHooks(t *testing.T) {
-	c := &hook.Chain{}
+	c := &hook.Pipeline{}
 	hook.On(c, func(context.Context, event.Stop) (hook.Outcome, error) { return hook.Outcome{}, errors.New("boom") })
 	hook.On(c, func(context.Context, event.Stop) (hook.Outcome, error) { panic("bug") })
 	hook.On(c, func(context.Context, event.Stop) (hook.Outcome, error) { return hook.Outcome{Block: true}, nil })
@@ -98,7 +98,7 @@ func TestFireSkipsFailingHooks(t *testing.T) {
 }
 
 func TestNilChain(t *testing.T) {
-	var c *hook.Chain
+	var c *hook.Pipeline
 	if out, err := c.Fire(context.Background(), event.Stop{}); err != nil || !cmp.Equal(out, hook.Outcome{}) {
 		t.Errorf("nil chain Fire = %+v, %v; want zero", out, err)
 	}

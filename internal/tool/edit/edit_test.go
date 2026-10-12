@@ -25,7 +25,7 @@ func TestEdit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := tooltest.NewWorkspace(t, map[string]string{"f.txt": original})
-			tt.input["path"] = "f.txt"
+			tt.input["file_path"] = "f.txt"
 			_, err := tooltest.Call(t, &Tool{Workspace: ws}, tt.input)
 			got := tooltest.ReadFile(t, ws, "f.txt")
 			if tt.wantErr != "" {
