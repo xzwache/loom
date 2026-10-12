@@ -247,3 +247,31 @@ func TestRunHeadlessCommandHook(t *testing.T) {
 		t.Errorf("tool result = %+v, want the hook's denial", result)
 	}
 }
+
+func TestRunHeadlessContinue(t *testing.T) {
+	te := newTestEnv(t, nil, llmtest.TextReply("first answer"), llmtest.TextReply("second answer"))
+
+	if code := run(context.Background(), []string{"-p", "first", "-json", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("first run = %d; stderr: %s", code, te.stderr)
+	}
+	var out headlessOutput
+	if err := json.Unmarshal(te.stdout.Bytes(), &out); err != nil || out.SessionID == "" {
+		t.Fatalf("first output = %s, %v; want a session id", te.stdout, err)
+	}
+
+	if code := run(context.Background(), []string{"-p", "second", "-continue", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("second run = %d; stderr: %s", code, te.stderr)
+	}
+	sent := te.model.Requests()[1].Messages
+	var texts []string
+	for _, m := range sent {
+		texts = append(texts, string(m.Role)+":"+m.Content[0].(llm.Text).Text)
+	}
+	if want := "user:first assistant:first answer user:second"; strings.Join(texts, " ") != want {
+		t.Errorf("second request = %v, want %s", texts, want)
+	}
+
+	if code := run(context.Background(), []string{"-p", "x", "-resume", "nope"}, te.env); code != exitError {
+		t.Errorf("resume of a missing session = %d, want %d", code, exitError)
+	}
+}
