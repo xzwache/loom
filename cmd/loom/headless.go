@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/permission"
+	"github.com/xzwache/loom/internal/session"
 	"github.com/xzwache/loom/internal/tool"
 	"github.com/xzwache/loom/internal/tool/bash"
 	"github.com/xzwache/loom/internal/tool/edit"
@@ -25,16 +27,20 @@ import (
 )
 
 type headlessOutput struct {
-	Stop  agent.StopReason `json:"stop"`
-	Text  string           `json:"text"`
-	Turns int              `json:"turns"`
-	Usage llm.Usage        `json:"usage"`
+	SessionID string           `json:"session_id"`
+	Stop      agent.StopReason `json:"stop"`
+	Text      string           `json:"text"`
+	Turns     int              `json:"turns"`
+	Usage     llm.Usage        `json:"usage"`
 }
 
 type headlessOptions struct {
 	task    string
 	jsonOut bool
 	trace   bool
+	// resume is a session id; latest continues the most recent session.
+	resume string
+	latest bool
 }
 
 func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, log *slog.Logger, e env) int {
@@ -56,6 +62,14 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		return exitError
 	}
 
+	store := session.NewFileStore(filepath.Join(stateHome(e.getenv), "loom", "sessions"))
+	sess, source, err := openSession(ctx, store, opts, ws.Dir(), cfg.Model)
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+	log.Info("session", "id", sess.ID, "source", source)
+
 	runID := trace.NewRunID(time.Now())
 	hooks := &hook.Pipeline{}
 	if opts.trace {
@@ -68,7 +82,7 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	}
 
 	err = command.Register(hooks, cfg.Hooks, command.Env{
-		SessionID:      runID,
+		SessionID:      sess.ID,
 		Dir:            ws.Dir(),
 		PermissionMode: string(cfg.Permissions.Mode),
 		Log:            log,
@@ -87,7 +101,7 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	hook.On(hooks, policy.Hook)
 
 	system := systemPrompt(ws.Dir())
-	start, err := hooks.Fire(ctx, event.SessionStart{Source: "startup", Model: cfg.Model, Cwd: ws.Dir()})
+	start, err := hooks.Fire(ctx, event.SessionStart{Source: source, Model: cfg.Model, Cwd: ws.Dir()})
 	if err != nil {
 		log.Warn("hook failed", "event", "SessionStart", "error", err)
 	}
@@ -110,7 +124,11 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		Log:   log,
 	}
 
-	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: opts.task}}}})
+	sess.History.AddPrompt(opts.task)
+	res, err := a.Run(ctx, sess.History.Messages())
+	if err := saveSession(context.WithoutCancel(ctx), store, &sess, res); err != nil {
+		log.Warn("session not saved", "error", err)
+	}
 	endReason := string(res.Stop)
 	if err != nil {
 		endReason = "error"
@@ -124,7 +142,7 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	}
 
 	if opts.jsonOut {
-		out := headlessOutput{Stop: res.Stop, Text: res.Text, Turns: res.Turns, Usage: res.Usage}
+		out := headlessOutput{SessionID: sess.ID, Stop: res.Stop, Text: res.Text, Turns: res.Turns, Usage: res.Usage}
 		if err := json.NewEncoder(e.stdout).Encode(out); err != nil {
 			fmt.Fprintf(e.stderr, "loom: %v\n", err)
 			return exitError
@@ -148,6 +166,45 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		fmt.Fprintf(e.stderr, "loom: stopped before finishing: %s\n", res.Stop)
 		return exitIncomplete
 	}
+}
+
+// openSession returns the session to run in and the SessionStart source:
+// "resume" for an existing one, "startup" for a new one.
+func openSession(ctx context.Context, store session.Store, opts headlessOptions, cwd, model string) (session.Session, string, error) {
+	switch {
+	case opts.resume != "":
+		s, err := store.Load(ctx, opts.resume)
+		return s, "resume", err
+	case opts.latest:
+		s, err := session.Latest(ctx, store)
+		if errors.Is(err, session.ErrNotFound) {
+			return s, "", errors.New("no session to continue")
+		}
+		return s, "resume", err
+	default:
+		return session.New(time.Now(), cwd, model), "startup", nil
+	}
+}
+
+// saveSession stores the history Run returned, which is always valid to send
+// again, even after an error or a budget stop.
+func saveSession(ctx context.Context, store session.Store, sess *session.Session, res agent.Result) error {
+	if len(res.Messages) == 0 {
+		return nil
+	}
+	history, err := session.NewHistory(res.Messages)
+	if err != nil {
+		return err
+	}
+	sess.History, sess.Usage, sess.Updated = history, sess.Usage.Add(res.Usage), time.Now()
+	return store.Save(ctx, *sess)
+}
+
+func stateHome(getenv func(string) string) string {
+	if dir := getenv("XDG_STATE_HOME"); dir != "" {
+		return dir
+	}
+	return filepath.Join(getenv("HOME"), ".local", "state")
 }
 
 // startTrace records every event to .loom/runs/<run-id>.jsonl in workdir.

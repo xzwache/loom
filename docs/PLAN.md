@@ -22,6 +22,7 @@ internal/memory     Store interface + file store, memory tools
 internal/task       task graph (blockedBy, cycle check) + file store, task tools
 internal/trace      JSONL run trace (an event subscriber)
 internal/config     typed config, layered loading
+internal/session    Session + History + Store (memory, file): resume and continue
 ```
 
 The two seams that the later features depend on:
@@ -103,10 +104,11 @@ script's `allow` does not skip a permission `ask`. To approve automatically, ans
 
 ## Upcoming design work
 
-- **Session and conversation store.** Today the history is a `[]llm.Message` that `Agent.Run` takes and returns;
-  nothing keeps it except the trace. Planned: `internal/session` with a `Session` (id, append-only history,
-  usage, metadata) and a `Store` interface (in-memory, JSONL file) so runs can be resumed, forked and inspected.
-  Compaction (step 9) and subagents (step 7) build on it.
+- **Sessions** (done in `feature/conversation`). `internal/session`: a `Session` (id, cwd, model, usage) with a
+  `History` that keeps the message list valid to send, and a `Store` interface with memory and file
+  implementations. Headless runs save to `$XDG_STATE_HOME/loom/sessions/<id>.json` (0600, atomic write);
+  `-continue` and `-resume <id>` pick it up. Messages are stored as typed JSON blocks, thinking signatures
+  included. Compaction (step 9) and subagents (step 7) build on it.
 - **App wiring.** `cmd/loom/headless.go` builds the workspace, tools, hook chain (trace → command hooks →
   permission policy) and agent. That moves into one builder (e.g. `internal/app`) shared by headless mode and
   the TUI, so both get identical behavior.
