@@ -13,6 +13,7 @@ import (
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/tool"
 	"github.com/xzwache/loom/internal/tool/bash"
 	"github.com/xzwache/loom/internal/tool/edit"
@@ -22,20 +23,20 @@ import (
 	"github.com/xzwache/loom/internal/trace"
 )
 
-type taskOutput struct {
+type headlessOutput struct {
 	Stop  agent.StopReason `json:"stop"`
 	Text  string           `json:"text"`
 	Turns int              `json:"turns"`
 	Usage llm.Usage        `json:"usage"`
 }
 
-type taskOptions struct {
+type headlessOptions struct {
 	task    string
 	jsonOut bool
 	trace   bool
 }
 
-func runTask(ctx context.Context, cfg config.Config, opts taskOptions, log *slog.Logger, e env) int {
+func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, log *slog.Logger, e env) int {
 	ws, err := tool.OpenFileSystemWorkspace(e.workdir)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
@@ -63,6 +64,15 @@ func runTask(ctx context.Context, cfg config.Config, opts taskOptions, log *slog
 		}
 		defer closeTrace()
 	}
+
+	policy, err := permission.New(cfg.Permissions, ws.Dir(), e.getenv("HOME"))
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+	// Registered after every hook that can rewrite tool input, so it judges
+	// the input that will actually run.
+	hook.On(hooks, policy.Hook)
 
 	system := systemPrompt(ws.Dir())
 	start, err := hooks.Fire(ctx, event.SessionStart{Source: "startup", Model: cfg.Model, Cwd: ws.Dir()})
@@ -102,7 +112,7 @@ func runTask(ctx context.Context, cfg config.Config, opts taskOptions, log *slog
 	}
 
 	if opts.jsonOut {
-		out := taskOutput{Stop: res.Stop, Text: res.Text, Turns: res.Turns, Usage: res.Usage}
+		out := headlessOutput{Stop: res.Stop, Text: res.Text, Turns: res.Turns, Usage: res.Usage}
 		if err := json.NewEncoder(e.stdout).Encode(out); err != nil {
 			fmt.Fprintf(e.stderr, "loom: %v\n", err)
 			return exitError

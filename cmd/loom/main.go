@@ -16,6 +16,7 @@ import (
 
 	"github.com/xzwache/loom/internal/config"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/permission"
 )
 
 var version = "dev"
@@ -72,6 +73,7 @@ func run(ctx context.Context, args []string, e env) int {
 	jsonOut := fs.Bool("json", false, "with -p, print the result as JSON")
 	quiet := fs.Bool("quiet", false, "log only warnings and errors")
 	traceRun := fs.Bool("trace", false, "with -p, record every event to .loom/runs/<run-id>.jsonl")
+	permissionMode := fs.String("permission-mode", "", "default, acceptEdits, plan or bypassPermissions; overrides the config")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -94,6 +96,10 @@ func run(ctx context.Context, args []string, e env) int {
 		paths = append(paths, *configPath)
 	}
 	cfg, err := config.Load(paths, e.getenv)
+	if err == nil && *permissionMode != "" {
+		cfg.Permissions.Mode = permission.Mode(*permissionMode)
+		err = cfg.Validate()
+	}
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
 		return exitError
@@ -119,7 +125,7 @@ func run(ctx context.Context, args []string, e env) int {
 		level = slog.LevelWarn
 	}
 	log := slog.New(slog.NewTextHandler(e.stderr, &slog.HandlerOptions{Level: level}))
-	return runTask(ctx, cfg, taskOptions{task: *task, jsonOut: *jsonOut, trace: *traceRun}, log, e)
+	return runHeadless(ctx, cfg, headlessOptions{task: *task, jsonOut: *jsonOut, trace: *traceRun}, log, e)
 }
 
 func configHome(getenv func(string) string) string {

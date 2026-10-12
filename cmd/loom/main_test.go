@@ -85,11 +85,13 @@ func TestRun(t *testing.T) {
 	}
 }
 
-func TestRunTask(t *testing.T) {
+func TestRunHeadless(t *testing.T) {
 	te := newTestEnv(t, nil,
 		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "bash", Input: json.RawMessage(`{"command":"echo hi > out.txt"}`)}),
 		llmtest.TextReply("Created out.txt."),
 	)
+
+	writeFile(t, filepath.Join(te.workdir, ".loom", "config.json"), `{"permissions": {"allow": ["Bash(echo *)"]}}`)
 
 	code := run(context.Background(), []string{"-p", "create out.txt"}, te.env)
 	if code != exitOK {
@@ -108,13 +110,13 @@ func TestRunTask(t *testing.T) {
 	}
 }
 
-func TestRunTaskJSON(t *testing.T) {
+func TestRunHeadlessJSON(t *testing.T) {
 	te := newTestEnv(t, nil, llmtest.TextReply("done"))
 
 	if code := run(context.Background(), []string{"-p", "hi", "-json", "-quiet"}, te.env); code != exitOK {
 		t.Fatalf("run = %d, want %d; stderr: %s", code, exitOK, te.stderr)
 	}
-	var out taskOutput
+	var out headlessOutput
 	if err := json.Unmarshal(te.stdout.Bytes(), &out); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, te.stdout)
 	}
@@ -126,7 +128,7 @@ func TestRunTaskJSON(t *testing.T) {
 	}
 }
 
-func TestRunTaskIncomplete(t *testing.T) {
+func TestRunHeadlessIncomplete(t *testing.T) {
 	te := newTestEnv(t, nil, llmtest.Reply{Response: llm.Response{StopReason: llm.StopRefusal}})
 
 	if code := run(context.Background(), []string{"-p", "hi"}, te.env); code != exitIncomplete {
@@ -137,7 +139,7 @@ func TestRunTaskIncomplete(t *testing.T) {
 	}
 }
 
-func TestRunTaskTrace(t *testing.T) {
+func TestRunHeadlessTrace(t *testing.T) {
 	te := newTestEnv(t, nil,
 		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "bash", Input: json.RawMessage(`{"command":"echo sk-secret"}`)}),
 		llmtest.TextReply("done"),
@@ -171,5 +173,58 @@ func TestRunTaskTrace(t *testing.T) {
 		"ModelRequest ModelResponse Stop SessionEnd"
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("trace events =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRunHeadlessPermissions(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "no rule asks, and -p denies", want: "denied: needs approval"},
+		{name: "plan mode", args: []string{"-permission-mode", "plan"}, want: "denied: plan mode allows only reading"},
+		{name: "floor", args: []string{"-permission-mode", "bypassPermissions"}, want: "denied: never allowed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			command := "touch x"
+			if tt.name == "floor" {
+				command = "sudo rm -rf /"
+			}
+			te := newTestEnv(t, nil,
+				llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "bash", Input: json.RawMessage(`{"command":"` + command + `"}`)}),
+				llmtest.TextReply("ok"),
+			)
+
+			if code := run(context.Background(), append([]string{"-p", "hi", "-quiet"}, tt.args...), te.env); code != exitOK {
+				t.Fatalf("run = %d, want %d; stderr: %s", code, exitOK, te.stderr)
+			}
+			msgs := te.model.Requests()[1].Messages
+			result := msgs[len(msgs)-1].Content[0].(llm.ToolResult)
+			if !result.IsError || !strings.HasPrefix(result.Content, tt.want) {
+				t.Errorf("tool result = %+v, want an error starting with %q", result, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunInvalidPermissionMode(t *testing.T) {
+	te := newTestEnv(t, nil)
+	if code := run(context.Background(), []string{"-p", "hi", "-permission-mode", "yolo"}, te.env); code != exitError {
+		t.Errorf("run = %d, want %d", code, exitError)
+	}
+	if !strings.Contains(te.stderr.String(), `unknown permission mode "yolo"`) {
+		t.Errorf("stderr = %q, want the bad mode", te.stderr)
+	}
+}
+
+func writeFile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

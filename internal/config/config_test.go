@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/xzwache/loom/internal/permission"
 )
 
 func writeFile(t *testing.T, dir, name, content string) string {
@@ -128,5 +130,29 @@ func TestDefaultPaths(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("DefaultPaths mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLoadMergesPermissions(t *testing.T) {
+	dir := t.TempDir()
+	user := writeFile(t, dir, "user.json", `{"permissions": {"mode": "plan", "allow": ["Bash(go test *)"], "deny": ["Read(.env)"]}}`)
+	project := writeFile(t, dir, "project.json", `{"permissions": {"mode": "acceptEdits", "allow": ["Edit(docs/**)"]}}`)
+
+	got, err := Load([]string{user, project}, envFrom(map[string]string{EnvModel: "m"}))
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	want := permission.Settings{
+		Mode:  permission.ModeAcceptEdits,
+		Allow: []string{"Bash(go test *)", "Edit(docs/**)"},
+		Deny:  []string{"Read(.env)"},
+	}
+	if diff := cmp.Diff(want, got.Permissions); diff != "" {
+		t.Errorf("permissions mismatch (-want +got):\n%s", diff)
+	}
+
+	bad := writeFile(t, dir, "bad.json", `{"permissions": {"deny": ["Glob(x)"]}}`)
+	if _, err := Load([]string{bad}, envFrom(map[string]string{EnvModel: "m"})); err == nil {
+		t.Error("Load with a bad rule: error = nil, want error")
 	}
 }
