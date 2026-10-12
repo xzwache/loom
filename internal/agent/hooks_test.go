@@ -247,3 +247,30 @@ func TestRunBudgetExceededEvent(t *testing.T) {
 		t.Errorf("BudgetExceeded events = %+v, want %+v", got, want)
 	}
 }
+
+func TestRunPermissionRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		out  hook.Outcome
+		want llm.ToolResult
+	}{
+		{name: "approved", out: hook.Outcome{Decision: hook.Allow}, want: llm.ToolResult{ToolUseID: "t1", Content: "echo {}"}},
+		{name: "rejected", out: hook.Outcome{Decision: hook.Deny, Reason: "no"}, want: llm.ToolResult{ToolUseID: "t1", Content: "denied: no", IsError: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
+			a := newAgent(t, model, echoTool())
+			a.Hooks = &hook.Chain{}
+			onPre(a.Hooks, hook.Outcome{Decision: hook.Ask, Reason: "risky"}, nil)
+			hook.On(a.Hooks, func(context.Context, event.PermissionRequest) (hook.Outcome, error) { return tt.out, nil })
+
+			if _, err := a.Run(context.Background(), prompt()); err != nil {
+				t.Fatalf("Run error: %v", err)
+			}
+			if got := lastResults(t, model.Requests()[1].Messages); !cmp.Equal(got, []llm.ToolResult{tt.want}) {
+				t.Errorf("tool results = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}

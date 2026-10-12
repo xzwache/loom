@@ -53,7 +53,15 @@ func (r *run) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult {
 	case pre.Decision == hook.Deny:
 		return r.deny(ctx, call, pre.Reason)
 	case pre.Decision == hook.Ask:
-		return r.deny(ctx, call, "needs approval, and no one can approve it in this mode: "+pre.Reason)
+		req := r.fire(ctx, event.PermissionRequest{ToolCall: call})
+		switch {
+		case r.halted:
+			return failed(use.ID, "not run: a hook stopped the run")
+		case req.Decision == hook.Deny:
+			return r.deny(ctx, call, req.Reason)
+		case req.Decision != hook.Allow:
+			return r.deny(ctx, call, "needs approval, and no one can approve it in this mode: "+pre.Reason)
+		}
 	}
 	if pre.UpdatedInput != nil {
 		call.ToolInput = pre.UpdatedInput

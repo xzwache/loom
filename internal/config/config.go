@@ -13,7 +13,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
+
+	"github.com/xzwache/loom/internal/permission"
 )
 
 // Environment variables read by Load.
@@ -32,7 +35,9 @@ type Config struct {
 	MaxRetries     int      `json:"max_retries"`
 	BashTimeout    Duration `json:"bash_timeout"`
 	MaxToolOutput  int      `json:"max_tool_output"`
-	APIKey         Secret   `json:"-"`
+	// Permission lists add up across files; the last file that sets mode wins.
+	Permissions permission.Settings `json:"permissions"`
+	APIKey      Secret              `json:"-"`
 }
 
 func Default() Config {
@@ -45,6 +50,7 @@ func Default() Config {
 		MaxRetries:     2,
 		BashTimeout:    Duration(2 * time.Minute),
 		MaxToolOutput:  30_000,
+		Permissions:    permission.Settings{Mode: permission.ModeDefault},
 	}
 }
 
@@ -83,11 +89,16 @@ func mergeFile(cfg *Config, path string) error {
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
+	before := cfg.Permissions
+	cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny = nil, nil, nil
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
+	cfg.Permissions.Allow = slices.Concat(before.Allow, cfg.Permissions.Allow)
+	cfg.Permissions.Ask = slices.Concat(before.Ask, cfg.Permissions.Ask)
+	cfg.Permissions.Deny = slices.Concat(before.Deny, cfg.Permissions.Deny)
 	return nil
 }
 
@@ -115,6 +126,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxRetries < 0 {
 		errs = append(errs, fmt.Errorf("max_retries must not be negative, got %d", c.MaxRetries))
+	}
+	if err := c.Permissions.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("permissions: %w", err))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
