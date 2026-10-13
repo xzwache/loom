@@ -36,6 +36,9 @@ type Config struct {
 	MaxRetries     int      `json:"max_retries"`
 	BashTimeout    Duration `json:"bash_timeout"`
 	MaxToolOutput  int      `json:"max_tool_output"`
+	// TodoReminderTurns is how many model turns an open todo list may go
+	// unchanged before the model is reminded; 0 turns the reminder off.
+	TodoReminderTurns int `json:"todo_reminder_turns"`
 	// Permission lists and floor rules add up across files; the last file that
 	// sets mode wins.
 	Permissions permission.Settings `json:"permissions"`
@@ -46,15 +49,16 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		MaxTokens:      16000,
-		MaxTurns:       50,
-		MaxRunTokens:   2_000_000,
-		MaxDuration:    Duration(30 * time.Minute),
-		RequestTimeout: Duration(10 * time.Minute),
-		MaxRetries:     2,
-		BashTimeout:    Duration(2 * time.Minute),
-		MaxToolOutput:  30_000,
-		Permissions:    permission.Settings{Mode: permission.ModeDefault},
+		MaxTokens:         16000,
+		MaxTurns:          50,
+		MaxRunTokens:      2_000_000,
+		MaxDuration:       Duration(30 * time.Minute),
+		RequestTimeout:    Duration(10 * time.Minute),
+		MaxRetries:        2,
+		BashTimeout:       Duration(2 * time.Minute),
+		MaxToolOutput:     30_000,
+		TodoReminderTurns: 3,
+		Permissions:       permission.Settings{Mode: permission.ModeDefault},
 	}
 }
 
@@ -140,6 +144,9 @@ func (c Config) Validate() error {
 		if f.value <= 0 {
 			errs = append(errs, fmt.Errorf("%s must be positive", f.name))
 		}
+	}
+	if c.TodoReminderTurns < 0 {
+		errs = append(errs, fmt.Errorf("todo_reminder_turns must not be negative, got %d", c.TodoReminderTurns))
 	}
 	if c.MaxRetries < 0 {
 		errs = append(errs, fmt.Errorf("max_retries must not be negative, got %d", c.MaxRetries))

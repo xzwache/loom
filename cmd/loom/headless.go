@@ -16,7 +16,9 @@ import (
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/permission"
+	"github.com/xzwache/loom/internal/prompt"
 	"github.com/xzwache/loom/internal/session"
+	"github.com/xzwache/loom/internal/todo"
 	"github.com/xzwache/loom/internal/tool"
 	"github.com/xzwache/loom/internal/tool/bash"
 	"github.com/xzwache/loom/internal/tool/edit"
@@ -50,12 +52,19 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		return exitError
 	}
 	defer ws.Close()
+	hooks := &hook.Pipeline{}
+	todos := todo.NewList(func(ctx context.Context, items []todo.Item) {
+		if _, err := hooks.Fire(ctx, todo.Updated(items)); err != nil {
+			log.Warn("hook failed", "event", "TodoUpdated", "error", err)
+		}
+	})
 	tools, err := tool.NewRegistry(
 		&bash.Tool{Dir: ws.Dir(), Timeout: cfg.BashTimeout.Std(), MaxOutput: cfg.MaxToolOutput},
 		&read.Tool{Workspace: ws, MaxOutput: cfg.MaxToolOutput},
 		&write.Tool{Workspace: ws},
 		&edit.Tool{Workspace: ws},
 		&glob.Tool{Workspace: ws},
+		&todo.Tool{List: todos},
 	)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
@@ -71,7 +80,6 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	log.Info("session", "id", sess.ID, "source", source)
 
 	runID := trace.NewRunID(time.Now())
-	hooks := &hook.Pipeline{}
 	if opts.trace {
 		closeTrace, err := startTrace(hooks, runID, ws.Dir(), cfg, log)
 		if err != nil {
@@ -99,8 +107,13 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	// Registered after every hook that can rewrite tool input, so it judges
 	// the input that will actually run.
 	hook.On(hooks, policy.Hook)
+	hook.On(hooks, (&todo.Reminder{List: todos, After: cfg.TodoReminderTurns}).Hook)
 
-	system := systemPrompt(ws.Dir())
+	system, err := systemPrompt(ctx, hooks, ws.Dir())
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
 	start, err := hooks.Fire(ctx, event.SessionStart{Source: source, Model: cfg.Model, Cwd: ws.Dir()})
 	if err != nil {
 		log.Warn("hook failed", "event", "SessionStart", "error", err)
@@ -222,8 +235,17 @@ func startTrace(hooks *hook.Pipeline, runID, workdir string, cfg config.Config, 
 	}, nil
 }
 
-func systemPrompt(workdir string) string {
-	return "You are loom, a coding agent. You work in " + workdir + " using the tools provided.\n" +
-		"Inspect before you change things, verify your changes (for example by running the tests), " +
-		"and finish with a short summary of what you did."
+// systemPrompt puts the fixed sections first and the project ones after, so
+// the cached prefix is shared across projects.
+func systemPrompt(ctx context.Context, hooks *hook.Pipeline, workdir string) (string, error) {
+	found, err := prompt.LoadInstructions(workdir)
+	if err != nil {
+		return "", err
+	}
+	for _, in := range found {
+		if _, err := hooks.Fire(ctx, event.InstructionsLoaded{Path: in.Path, Source: "project"}); err != nil {
+			return "", err
+		}
+	}
+	return prompt.Build(prompt.Identity(), prompt.Guidelines(), prompt.Environment(workdir), prompt.Instructions(found)), nil
 }

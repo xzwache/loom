@@ -137,7 +137,7 @@ func (p *Policy) Check(tool string, input json.RawMessage) (hook.Decision, strin
 			edit: tool != "read",
 		})
 	default:
-		return p.decide(request{tool: tool, match: func(r Rule, _ bool) bool { return r.spec == "" }, free: tool == "glob"})
+		return p.decide(request{tool: tool, match: func(r Rule, _ bool) bool { return r.spec == "" }, free: freeTools[tool]})
 	}
 }
 
@@ -212,6 +212,9 @@ func rank(d hook.Decision) int {
 		return 0
 	}
 }
+
+// freeTools only read or only change loom's own state, so they run without a rule.
+var freeTools = map[string]bool{"glob": true, "todo": true}
 
 type filePath struct {
 	abs     string

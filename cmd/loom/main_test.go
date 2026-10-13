@@ -105,7 +105,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Errorf("out.txt = %q, %v; want the bash tool to have run in the workdir", data, err)
 	}
 	req := te.model.Requests()[0]
-	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 5 {
+	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 6 {
 		t.Errorf("first request = model %q, system %q, %d tools", req.Model, req.System, len(req.Tools))
 	}
 }
@@ -273,5 +273,24 @@ func TestRunHeadlessContinue(t *testing.T) {
 
 	if code := run(context.Background(), []string{"-p", "x", "-resume", "nope"}, te.env); code != exitError {
 		t.Errorf("resume of a missing session = %d, want %d", code, exitError)
+	}
+}
+
+func TestRunHeadlessTodoAndInstructions(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "todo", Input: json.RawMessage(`{"todos":[{"content":"fix","status":"in_progress"}]}`)}),
+		llmtest.TextReply("done"),
+	)
+	writeFile(t, filepath.Join(te.workdir, "AGENTS.md"), "Always run make check.")
+
+	if code := run(context.Background(), []string{"-p", "hi", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d; stderr: %s", code, te.stderr)
+	}
+	if sys := te.model.Requests()[0].System; !strings.Contains(sys, "Always run make check.") {
+		t.Errorf("system prompt lacks AGENTS.md: %q", sys)
+	}
+	msgs := te.model.Requests()[1].Messages
+	if result := msgs[len(msgs)-1].Content[0].(llm.ToolResult); result.IsError || result.Content != "[>] fix\n" {
+		t.Errorf("todo result = %+v, want the rendered list", result)
 	}
 }
