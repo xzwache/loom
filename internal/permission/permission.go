@@ -213,8 +213,9 @@ func rank(d hook.Decision) int {
 	}
 }
 
-// freeTools only read or only change loom's own state, so they run without a rule.
-var freeTools = map[string]bool{"glob": true, "todo": true}
+// freeTools only read or only change loom's own state, so they run without a
+// rule. A subagent's own tool calls are checked like any other.
+var freeTools = map[string]bool{"agent": true, "glob": true, "todo": true}
 
 type filePath struct {
 	abs     string

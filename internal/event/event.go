@@ -3,6 +3,7 @@
 package event
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/xzwache/loom/internal/llm"
@@ -15,6 +16,24 @@ type Name string
 
 type Event interface {
 	Name() Name
+}
+
+// Agent names the subagent whose run fires an event.
+type Agent struct {
+	ID   string
+	Type string
+}
+
+type agentKey struct{}
+
+func WithAgent(ctx context.Context, a Agent) context.Context {
+	return context.WithValue(ctx, agentKey{}, a)
+}
+
+// AgentFrom reports the subagent firing events with ctx; false means the main agent.
+func AgentFrom(ctx context.Context) (Agent, bool) {
+	a, ok := ctx.Value(agentKey{}).(Agent)
+	return a, ok
 }
 
 type ToolCall struct {
@@ -159,10 +178,13 @@ type SubagentStart struct {
 	AgentType string `json:"agent_type"`
 }
 
+// SubagentStop fires when a subagent finishes, in place of Stop. Blocking it
+// makes the subagent keep working.
 type SubagentStop struct {
-	AgentID   string `json:"agent_id"`
-	AgentType string `json:"agent_type"`
-	Stop      string `json:"stop"`
+	AgentID              string `json:"agent_id"`
+	AgentType            string `json:"agent_type"`
+	StopHookActive       bool   `json:"stop_hook_active"`
+	LastAssistantMessage string `json:"last_assistant_message"`
 }
 
 type TaskCreated struct {

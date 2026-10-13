@@ -39,6 +39,21 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return t, ok
 }
 
+// Only returns a registry with the named tools.
+func (r *Registry) Only(names ...string) (*Registry, error) {
+	sub := &Registry{tools: make(map[string]Tool, len(names))}
+	for _, name := range names {
+		t, ok := r.tools[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown tool %q", name)
+		}
+		if err := sub.Register(t); err != nil {
+			return nil, err
+		}
+	}
+	return sub, nil
+}
+
 func (r *Registry) Specs() []llm.ToolSpec {
 	specs := make([]llm.ToolSpec, 0, len(r.tools))
 	for _, t := range r.tools {

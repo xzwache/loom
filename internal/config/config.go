@@ -18,6 +18,7 @@ import (
 
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
+	"github.com/xzwache/loom/internal/prompt"
 )
 
 // Environment variables read by Load.
@@ -39,12 +40,26 @@ type Config struct {
 	// TodoReminderTurns is how many model turns an open todo list may go
 	// unchanged before the model is reminded; 0 turns the reminder off.
 	TodoReminderTurns int `json:"todo_reminder_turns"`
+	// InstructionFiles are the file names read for project instructions, in
+	// order; a later file in the list wins on conflicts.
+	InstructionFiles []string `json:"instruction_files"`
+	// Subagent configures agents started with the agent tool.
+	Subagent Subagent `json:"subagent"`
 	// Permission lists and floor rules add up across files; the last file that
 	// sets mode wins.
 	Permissions permission.Settings `json:"permissions"`
 	// Hooks from every file run; a file adds to the hooks of the files before it.
 	Hooks  command.Settings `json:"hooks,omitempty"`
 	APIKey Secret           `json:"-"`
+}
+
+// Subagent limits each subagent run. An empty Model uses the main model, so
+// a cheaper model can take over searches and other delegated work.
+type Subagent struct {
+	Model        string   `json:"model,omitempty"`
+	MaxTurns     int      `json:"max_turns"`
+	MaxRunTokens int      `json:"max_run_tokens"`
+	Tools        []string `json:"tools"`
 }
 
 func Default() Config {
@@ -58,7 +73,13 @@ func Default() Config {
 		BashTimeout:       Duration(2 * time.Minute),
 		MaxToolOutput:     30_000,
 		TodoReminderTurns: 3,
-		Permissions:       permission.Settings{Mode: permission.ModeDefault},
+		InstructionFiles:  slices.Clone(prompt.DefaultInstructionFiles),
+		Subagent: Subagent{
+			MaxTurns:     30,
+			MaxRunTokens: 500_000,
+			Tools:        []string{"bash", "read", "write", "edit", "glob"},
+		},
+		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
 }
 
@@ -139,6 +160,8 @@ func (c Config) Validate() error {
 		{"request_timeout", int64(c.RequestTimeout)},
 		{"bash_timeout", int64(c.BashTimeout)},
 		{"max_tool_output", int64(c.MaxToolOutput)},
+		{"subagent.max_turns", int64(c.Subagent.MaxTurns)},
+		{"subagent.max_run_tokens", int64(c.Subagent.MaxRunTokens)},
 	}
 	for _, f := range positive {
 		if f.value <= 0 {
@@ -147,6 +170,16 @@ func (c Config) Validate() error {
 	}
 	if c.TodoReminderTurns < 0 {
 		errs = append(errs, fmt.Errorf("todo_reminder_turns must not be negative, got %d", c.TodoReminderTurns))
+	}
+	for _, name := range c.InstructionFiles {
+		if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+			errs = append(errs, fmt.Errorf("instruction_files: %q is not a file name", name))
+		}
+	}
+	for _, name := range c.Subagent.Tools {
+		if name == "agent" || name == "todo" {
+			errs = append(errs, fmt.Errorf("subagent.tools cannot include %q", name))
+		}
 	}
 	if c.MaxRetries < 0 {
 		errs = append(errs, fmt.Errorf("max_retries must not be negative, got %d", c.MaxRetries))

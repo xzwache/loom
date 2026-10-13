@@ -97,6 +97,9 @@ func TestLoadErrors(t *testing.T) {
 		{name: "api key is not a file setting", content: `{"api_key": "sk"}`, wantErr: `unknown field "api_key"`},
 		{name: "invalid value", content: `{"max_turns": 0}`, wantErr: "max_turns must be positive"},
 		{name: "invalid duration", content: `{"max_duration": "soon"}`, wantErr: `invalid duration "soon"`},
+		{name: "recursive subagent", content: `{"model": "m", "subagent": {"tools": ["read", "agent"]}}`, wantErr: `subagent.tools cannot include "agent"`},
+		{name: "subagent turns", content: `{"model": "m", "subagent": {"max_turns": 0}}`, wantErr: "subagent.max_turns must be positive"},
+		{name: "instruction path", content: `{"model": "m", "instruction_files": ["docs/AGENTS.md"]}`, wantErr: `instruction_files: "docs/AGENTS.md" is not a file name`},
 		{name: "negative retries", content: `{"model": "m", "max_retries": -1}`, wantErr: "max_retries must not be negative"},
 	}
 	for _, tt := range tests {

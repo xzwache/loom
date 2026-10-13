@@ -28,6 +28,10 @@ type Agent struct {
 	Budget    Budget
 	Hooks     *hook.Pipeline
 	Log       *slog.Logger
+	// Subagent is set when this agent runs for another one. Its events then
+	// carry the subagent in their context, it fires SubagentStop in place of
+	// Stop, and it skips UserPromptSubmit.
+	Subagent event.Agent
 }
 
 // Budget limits a single Run. Zero values mean no limit, except MaxTurns.
@@ -91,6 +95,9 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	if rs.log == nil {
 		rs.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	if a.Subagent.ID != "" {
+		ctx = event.WithAgent(ctx, a.Subagent)
+	}
 	if a.Budget.MaxDuration > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeoutCause(ctx, a.Budget.MaxDuration, errTimeBudget)
@@ -108,7 +115,7 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 
 func (rs *runState) loop(ctx context.Context, res *Result) error {
 	a := rs.agent
-	if len(res.Messages) > 0 {
+	if len(res.Messages) > 0 && a.Subagent.ID == "" {
 		out := rs.fire(ctx, event.UserPromptSubmit{Prompt: text(res.Messages[len(res.Messages)-1].Content)})
 		if out.Block || rs.halted {
 			rs.halt(out.Reason)
@@ -197,7 +204,7 @@ func (rs *runState) loop(ctx context.Context, res *Result) error {
 		skipTools(res, resp.Content, "not run: the response ended with "+string(resp.StopReason))
 		res.Text = text(resp.Content)
 		if res.Stop == StopDone {
-			out := rs.fire(ctx, event.Stop{StopHookActive: stopHookActive, LastAssistantMessage: res.Text})
+			out := rs.fire(ctx, rs.stopEvent(stopHookActive, res.Text))
 			if out.Block && !rs.halted {
 				stopHookActive = true
 				reason := out.Reason
@@ -258,6 +265,13 @@ func (rs *runState) halt(reason string) {
 	if reason == "" {
 		rs.haltReason = "stopped by a hook"
 	}
+}
+
+func (rs *runState) stopEvent(active bool, last string) event.Event {
+	if sub := rs.agent.Subagent; sub.ID != "" {
+		return event.SubagentStop{AgentID: sub.ID, AgentType: sub.Type, StopHookActive: active, LastAssistantMessage: last}
+	}
+	return event.Stop{StopHookActive: active, LastAssistantMessage: last}
 }
 
 func modelResponse(turn int, resp llm.Response) event.ModelResponse {

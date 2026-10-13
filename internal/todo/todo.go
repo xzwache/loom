@@ -160,7 +160,10 @@ type Reminder struct {
 	idle    int
 }
 
-func (r *Reminder) Hook(_ context.Context, _ event.ModelRequest) (hook.Outcome, error) {
+func (r *Reminder) Hook(ctx context.Context, _ event.ModelRequest) (hook.Outcome, error) {
+	if _, sub := event.AgentFrom(ctx); sub {
+		return hook.Outcome{}, nil
+	}
 	if v := r.List.Version(); v != r.version {
 		r.version, r.idle = v, 0
 		return hook.Outcome{}, nil
