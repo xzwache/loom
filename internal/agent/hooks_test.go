@@ -274,3 +274,26 @@ func TestRunPermissionRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestRunModelRequestContext(t *testing.T) {
+	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
+	a := newAgent(t, model, echoTool())
+	a.Hooks = &hook.Pipeline{}
+	hook.On(a.Hooks, func(_ context.Context, e event.ModelRequest) (hook.Outcome, error) {
+		if e.Turn == 2 {
+			return hook.Outcome{AdditionalContext: "<system-reminder>update the list</system-reminder>"}, nil
+		}
+		return hook.Outcome{}, nil
+	})
+
+	res, err := a.Run(context.Background(), prompt())
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	checkHistory(t, res.Messages)
+	sent := model.Requests()[1].Messages
+	last := sent[len(sent)-1].Content
+	if len(last) != 2 || text(last) != "<system-reminder>update the list</system-reminder>" {
+		t.Errorf("second request ends with %+v, want the tool result and the reminder", last)
+	}
+}

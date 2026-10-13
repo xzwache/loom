@@ -129,10 +129,15 @@ func (rs *runState) loop(ctx context.Context, res *Result) error {
 			return nil
 		}
 
-		rs.fire(ctx, event.ModelRequest{Turn: res.Turns + 1, Model: a.ModelID, MessageCount: len(res.Messages), ToolCount: len(rs.specs)})
+		req := rs.fire(ctx, event.ModelRequest{Turn: res.Turns + 1, Model: a.ModelID, MessageCount: len(res.Messages), ToolCount: len(rs.specs)})
 		if rs.halted {
 			res.Stop = StopHalted
 			return nil
+		}
+		// After pause_turn the history ends with the assistant, and the turn
+		// must be resent as it is.
+		if n := len(res.Messages); n > 0 && res.Messages[n-1].Role == llm.RoleUser {
+			appendUserText(res, req.AdditionalContext)
 		}
 		resp, err := a.Model.SendMessage(ctx, llm.Request{
 			Model:     a.ModelID,
