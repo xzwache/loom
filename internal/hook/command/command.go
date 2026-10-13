@@ -22,6 +22,7 @@ import (
 
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 const defaultTimeout = 60 * time.Second
@@ -169,7 +170,7 @@ func (s *script) input(ctx context.Context, e event.Event) ([]byte, error) {
 
 func claudeToolName(name string) string {
 	switch name {
-	case "agent", "bash", "read", "write", "edit", "glob":
+	case tool.Agent, tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob:
 		return strings.ToUpper(name[:1]) + name[1:]
 	default:
 		return name

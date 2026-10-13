@@ -14,6 +14,7 @@ import (
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 type Status string
@@ -114,7 +115,7 @@ type Tool struct {
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "todo",
+		Name: tool.Todo,
 		Description: "Replace your todo list for the current work. Use it for tasks with several steps: " +
 			"list the steps, keep exactly one in_progress, and mark each completed as soon as it is done.",
 		InputSchema: json.RawMessage(`{

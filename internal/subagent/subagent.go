@@ -15,6 +15,7 @@ import (
 	"github.com/xzwache/loom/internal/agent"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 const TypeGeneral = "general-purpose"
@@ -28,7 +29,7 @@ type Tool struct {
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "agent",
+		Name: tool.Agent,
 		Description: "Start a subagent with a fresh context to do one self-contained task, such as searching the codebase, " +
 			"investigating a question or making a well-defined change. The subagent cannot see this conversation, so the " +
 			"prompt must say everything it needs, including what to report back. Only its final report comes back to you.",

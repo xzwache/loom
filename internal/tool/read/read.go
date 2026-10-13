@@ -26,7 +26,7 @@ var _ tool.Tool = (*Tool)(nil)
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "read",
+		Name: tool.Read,
 		Description: "Read a text file. Lines are returned as \"<line number>\\t<text>\". " +
 			"Use offset and limit to read part of a large file.",
 		InputSchema: json.RawMessage(`{

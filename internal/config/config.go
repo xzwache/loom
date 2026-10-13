@@ -19,6 +19,7 @@ import (
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 // Environment variables read by Load.
@@ -77,7 +78,7 @@ func Default() Config {
 		Subagent: Subagent{
 			MaxTurns:     30,
 			MaxRunTokens: 500_000,
-			Tools:        []string{"bash", "read", "write", "edit", "glob"},
+			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob},
 		},
 		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
@@ -177,7 +178,7 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, name := range c.Subagent.Tools {
-		if name == "agent" || name == "todo" {
+		if slices.Contains(tool.MainOnly, name) {
 			errs = append(errs, fmt.Errorf("subagent.tools cannot include %q", name))
 		}
 	}

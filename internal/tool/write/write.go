@@ -18,7 +18,7 @@ var _ tool.Tool = (*Tool)(nil)
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name:        "write",
+		Name:        tool.Write,
 		Description: "Create or overwrite a file with the given content. Missing parent directories are created.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
