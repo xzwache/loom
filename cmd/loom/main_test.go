@@ -316,3 +316,24 @@ func TestRunHeadlessSubagent(t *testing.T) {
 		t.Errorf("agent result = %+v, want the subagent's report", result)
 	}
 }
+
+func TestRunHeadlessAgentTypes(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "agent", Input: json.RawMessage(`{"description":"review","prompt":"review it","subagent_type":"reviewer"}`)}),
+		llmtest.TextReply("looks fine"),
+		llmtest.TextReply("Done."),
+	)
+	writeFile(t, filepath.Join(te.workdir, ".loom", "agents", "reviewer.md"),
+		"---\nname: reviewer\ndescription: Reviews changes.\ntools: Read, Glob\nmodel: review-model\n---\nYou review code.\n")
+
+	if code := run(context.Background(), []string{"-p", "review", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d; stderr: %s", code, te.stderr)
+	}
+	reqs := te.model.Requests()
+	if spec := reqs[0].Tools[0]; spec.Name != "agent" || !strings.Contains(spec.Description, "- reviewer: Reviews changes.") {
+		t.Errorf("agent tool = %+v, want the reviewer type listed", spec)
+	}
+	if sub := reqs[1]; sub.Model != "review-model" || !strings.HasPrefix(sub.System, "You review code.") || len(sub.Tools) != 2 {
+		t.Errorf("subagent request = model %q, %d tools, system %q", sub.Model, len(sub.Tools), sub.System)
+	}
+}

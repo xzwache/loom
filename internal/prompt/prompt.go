@@ -16,12 +16,8 @@ import (
 	"strings"
 )
 
-var (
-	//go:embed system.md
-	systemMD string
-	//go:embed subagent.md
-	subagentMD string
-)
+//go:embed system.md
+var systemMD string
 
 type Section struct {
 	Title string
@@ -44,9 +40,8 @@ func Build(sections ...Section) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// System is the main agent's fixed prompt; Subagent is the one for agents it starts.
-func System() Section   { return Section{Text: systemMD} }
-func Subagent() Section { return Section{Text: subagentMD} }
+// System is the main agent's fixed prompt.
+func System() Section { return Section{Text: systemMD} }
 
 func Environment(workdir string) Section {
 	return Section{Title: "Environment", Text: fmt.Sprintf("Working directory: %s\nPlatform: %s/%s", workdir, runtime.GOOS, runtime.GOARCH)}

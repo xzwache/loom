@@ -133,7 +133,12 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		return exitError
 	}
 	model := e.newModel(cfg)
-	err = tools.Register(&subagent.Tool{Template: agent.Agent{
+	types, err := subagent.LoadTypes(filepath.Join(configHome(e.getenv), "loom", "agents"), filepath.Join(ws.Dir(), ".loom", "agents"))
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+	agentTool, err := subagent.New(agent.Agent{
 		Model:     model,
 		ModelID:   cmp.Or(cfg.Subagent.Model, cfg.Model),
 		System:    subSystem,
@@ -146,7 +151,10 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		},
 		Hooks: hooks,
 		Log:   log,
-	}})
+	}, types)
+	if err == nil {
+		err = tools.Register(agentTool)
+	}
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
 		return exitError
@@ -265,9 +273,9 @@ func startTrace(hooks *hook.Pipeline, runID, workdir string, cfg config.Config, 
 	}, nil
 }
 
-// systemPrompts returns the main and the subagent prompt. Fixed sections go
-// first and the project ones after, so the cached prefix is shared across
-// projects.
+// systemPrompts returns the main prompt and the context every subagent gets
+// after its type's prompt. Fixed sections go first and the project ones after,
+// so the cached prefix is shared across projects.
 func systemPrompts(ctx context.Context, hooks *hook.Pipeline, loader prompt.Loader, workdir string) (main, sub string, err error) {
 	found, err := loader.Load(workdir)
 	if err != nil {
@@ -279,5 +287,5 @@ func systemPrompts(ctx context.Context, hooks *hook.Pipeline, loader prompt.Load
 		}
 	}
 	env, project := prompt.Environment(workdir), prompt.Instructions(found)
-	return prompt.Build(prompt.System(), env, project), prompt.Build(prompt.Subagent(), env, project), nil
+	return prompt.Build(prompt.System(), env, project), prompt.Build(env, project), nil
 }

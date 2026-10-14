@@ -4,12 +4,15 @@
 package subagent
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/xzwache/loom/internal/agent"
@@ -20,34 +23,86 @@ import (
 
 const TypeGeneral = "general-purpose"
 
-// Tool runs each subagent as a copy of Template with a fresh history.
-// Template.Tools must not contain the agent tool, so subagents cannot start
-// subagents of their own.
+// Tool starts subagents of the types it was built with.
 type Tool struct {
-	Template agent.Agent
+	template agent.Agent
+	types    map[string]prepared
+	spec     llm.ToolSpec
 }
 
-func (t *Tool) Spec() llm.ToolSpec {
-	return llm.ToolSpec{
+type prepared struct {
+	Type
+	tools *tool.Registry
+}
+
+// New prepares the agent tool. template holds what every subagent shares: the
+// model client, limits and hooks; its Tools are every tool a subagent may get
+// and must not include the agent tool, so subagents cannot start their own;
+// its System is appended after each type's prompt.
+func New(template agent.Agent, types []Type) (*Tool, error) {
+	all := template.Tools
+	if all == nil {
+		all, _ = tool.NewRegistry()
+	}
+	types = slices.SortedFunc(slices.Values(types), func(a, b Type) int { return strings.Compare(a.Name, b.Name) })
+	t := &Tool{template: template, types: map[string]prepared{}}
+	var names, list []string
+	for _, typ := range types {
+		tools, err := typeTools(all, typ, template.Log)
+		if err != nil {
+			return nil, err
+		}
+		t.types[typ.Name] = prepared{Type: typ, tools: tools}
+		names = append(names, typ.Name)
+		list = append(list, "- "+typ.Name+": "+typ.Description)
+	}
+	if _, ok := t.types[TypeGeneral]; !ok {
+		return nil, fmt.Errorf("agent type %s is missing", TypeGeneral)
+	}
+
+	enum, _ := json.Marshal(names)
+	t.spec = llm.ToolSpec{
 		Name: tool.Agent,
-		Description: "Start a subagent with a fresh context to do one self-contained task, such as searching the codebase, " +
-			"investigating a question or making a well-defined change. The subagent cannot see this conversation, so the " +
-			"prompt must say everything it needs, including what to report back. Only its final report comes back to you.",
+		Description: "Start a subagent with a fresh context to do one self-contained task, so its details stay out of your " +
+			"context. The subagent cannot see this conversation, so the prompt must say everything it needs, including " +
+			"what to report back. Only its final report comes back to you.\n\nAgent types:\n" + strings.Join(list, "\n"),
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"description": {"type": "string", "description": "A short (3-5 word) description of the task"},
-				"prompt": {"type": "string", "description": "The task for the subagent"}
+				"prompt": {"type": "string", "description": "The task for the subagent"},
+				"subagent_type": {"type": "string", "enum": ` + string(enum) + `, "description": "The type of agent to use; default ` + TypeGeneral + `"}
 			},
 			"required": ["description", "prompt"]
 		}`),
 	}
+	return t, nil
 }
+
+// typeTools limits a type to the subagent tools it lists. Tools the
+// subagent may not use are left out, so subagent.tools stays the ceiling.
+func typeTools(all *tool.Registry, typ Type, log *slog.Logger) (*tool.Registry, error) {
+	if len(typ.Tools) == 0 {
+		return all, nil
+	}
+	var names []string
+	for _, name := range typ.Tools {
+		if _, ok := all.Get(name); ok {
+			names = append(names, name)
+		} else if log != nil {
+			log.Warn("agent type lists a tool subagents cannot use", "type", typ.Name, "tool", name, "path", typ.Path)
+		}
+	}
+	return all.Only(names...)
+}
+
+func (t *Tool) Spec() llm.ToolSpec { return t.spec }
 
 func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	var in struct {
-		Description string `json:"description"`
-		Prompt      string `json:"prompt"`
+		Description  string `json:"description"`
+		Prompt       string `json:"prompt"`
+		SubagentType string `json:"subagent_type"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
@@ -58,9 +113,16 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	if _, nested := event.AgentFrom(ctx); nested {
 		return "", errors.New("a subagent cannot start subagents")
 	}
+	typ, ok := t.types[cmp.Or(in.SubagentType, TypeGeneral)]
+	if !ok {
+		return "", fmt.Errorf("unknown subagent_type %q", in.SubagentType)
+	}
 
-	a := t.Template
-	a.Subagent = event.Agent{ID: newID(), Type: TypeGeneral}
+	a := t.template
+	a.Subagent = event.Agent{ID: newID(), Type: typ.Name}
+	a.ModelID = cmp.Or(typ.Model, a.ModelID)
+	a.Tools = typ.tools
+	a.System = strings.TrimSpace(typ.Prompt + "\n\n" + a.System)
 	prompt := in.Prompt
 	start, err := a.Hooks.Fire(ctx, event.SubagentStart{AgentID: a.Subagent.ID, AgentType: a.Subagent.Type})
 	if err != nil && a.Log != nil {
@@ -75,8 +137,8 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("subagent %s: %w", a.Subagent.ID, err)
 	}
 	if a.Log != nil {
-		a.Log.Info("subagent", "id", a.Subagent.ID, "description", in.Description, "stop", res.Stop, "turns", res.Turns,
-			"input_tokens", res.Usage.InputTokens, "output_tokens", res.Usage.OutputTokens)
+		a.Log.Info("subagent", "id", a.Subagent.ID, "type", typ.Name, "description", in.Description, "stop", res.Stop,
+			"turns", res.Turns, "input_tokens", res.Usage.InputTokens, "output_tokens", res.Usage.OutputTokens)
 	}
 	return report(res), nil
 }
