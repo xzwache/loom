@@ -19,6 +19,7 @@ import (
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
 	"github.com/xzwache/loom/internal/session"
+	"github.com/xzwache/loom/internal/skill"
 	"github.com/xzwache/loom/internal/subagent"
 	"github.com/xzwache/loom/internal/todo"
 	"github.com/xzwache/loom/internal/tool"
@@ -110,6 +111,13 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	// the input that will actually run.
 	hook.On(hooks, policy.Hook)
 	hook.On(hooks, (&todo.Reminder{List: todos, After: cfg.TodoReminderTurns}).Hook)
+
+	// After the hooks are registered, so they see SkillLoaded.
+	skillRoots := []string{filepath.Join(configHome(e.getenv), "loom", "skills"), filepath.Join(ws.Dir(), ".loom", "skills")}
+	if err := addSkills(ctx, tools, hooks, skillRoots, log); err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
 
 	loader := prompt.Loader{Names: cfg.InstructionFiles, UserDir: filepath.Join(configHome(e.getenv), "loom")}
 	system, subSystem, err := systemPrompts(ctx, hooks, loader, ws.Dir())
@@ -288,4 +296,23 @@ func systemPrompts(ctx context.Context, hooks *hook.Pipeline, loader prompt.Load
 	}
 	env, project := prompt.Environment(workdir), prompt.Instructions(found)
 	return prompt.Build(prompt.System(), env, project), prompt.Build(env, project), nil
+}
+
+// addSkills registers the skill tool when any skill is found in roots, and
+// reports each skill as loaded and, later, as used.
+func addSkills(ctx context.Context, tools *tool.Registry, hooks *hook.Pipeline, roots []string, log *slog.Logger) error {
+	skills, err := skill.Load(roots...)
+	if err != nil || len(skills) == 0 {
+		return err
+	}
+	for _, s := range skills {
+		if _, err := hooks.Fire(ctx, event.SkillLoaded{Skill: s.Name, Path: filepath.Join(s.Dir, skill.FileName)}); err != nil {
+			return err
+		}
+	}
+	return tools.Register(skill.NewTool(skills, func(ctx context.Context, s skill.Skill) {
+		if _, err := hooks.Fire(ctx, event.SkillUsed{Skill: s.Name}); err != nil {
+			log.Warn("hook failed", "event", "SkillUsed", "error", err)
+		}
+	}))
 }

@@ -7,6 +7,7 @@ const (
 	Edit  = "edit"
 	Glob  = "glob"
 	Read  = "read"
+	Skill = "skill"
 	Todo  = "todo"
 	Write = "write"
 )

@@ -112,8 +112,8 @@ func TestCheck(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New error: %v", err)
 			}
-			if got, reason := p.Check(tt.tool, tt.input); got != tt.want {
-				t.Errorf("Check(%s, %s) = %s (%s), want %s", tt.tool, tt.input, got, reason, tt.want)
+			if v := p.Decide(tt.tool, tt.input); v.Decision != tt.want {
+				t.Errorf("Decide(%s, %s) = %s (%s), want %s", tt.tool, tt.input, v.Decision, v.Reason, tt.want)
 			}
 		})
 	}
@@ -137,13 +137,13 @@ func TestCheckSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, _ := p.Check("read", file("innocent.txt")); got != hook.Deny {
+	if got := p.Decide("read", file("innocent.txt")).Decision; got != hook.Deny {
 		t.Errorf("read of a link to .env = %s, want deny", got)
 	}
-	if got, _ := p.Check("edit", file("docs/link.md")); got != hook.Ask {
+	if got := p.Decide("edit", file("docs/link.md")).Decision; got != hook.Ask {
 		t.Errorf("edit of a dangling docs link pointing outside docs = %s, want ask", got)
 	}
-	if got, _ := p.Check("edit", file("docs/real.md")); got != hook.Allow {
+	if got := p.Decide("edit", file("docs/real.md")).Decision; got != hook.Allow {
 		t.Errorf("edit of a new file in docs = %s, want allow", got)
 	}
 }
@@ -168,5 +168,25 @@ func TestHook(t *testing.T) {
 	out, err := c.Fire(context.Background(), event.PreToolUse{ToolCall: event.ToolCall{ToolName: "bash", ToolInput: bash("git push")}})
 	if err != nil || out.Decision != hook.Deny || out.Reason != "denied by rule Bash(git push *)" {
 		t.Errorf("Fire = %+v, %v; want a deny with the rule", out, err)
+	}
+}
+
+func TestSetMode(t *testing.T) {
+	p, err := New(Settings{}, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit := func() hook.Decision { return p.Decide("edit", file("a.txt")).Decision }
+	if got := edit(); got != hook.Ask {
+		t.Fatalf("edit in default mode = %s, want ask", got)
+	}
+	if err := p.SetMode(ModeAcceptEdits); err != nil || p.Mode() != ModeAcceptEdits {
+		t.Fatalf("SetMode = %v, mode %s", err, p.Mode())
+	}
+	if got := edit(); got != hook.Allow {
+		t.Errorf("edit in acceptEdits mode = %s, want allow", got)
+	}
+	if err := p.SetMode("yolo"); err == nil || p.Mode() != ModeAcceptEdits {
+		t.Errorf("SetMode(yolo) = %v, mode %s; want an error and no change", err, p.Mode())
 	}
 }
