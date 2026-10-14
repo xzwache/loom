@@ -22,6 +22,7 @@ import (
 
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 const defaultTimeout = 60 * time.Second
@@ -114,7 +115,7 @@ func (s *script) Handle(ctx context.Context, e event.Event) (hook.Outcome, error
 	if call, ok := event.Tool(e); ok && s.match != nil && !s.match.MatchString(call.ToolName) {
 		return hook.Outcome{}, nil
 	}
-	input, err := s.input(e)
+	input, err := s.input(ctx, e)
 	if err != nil {
 		return hook.Outcome{}, err
 	}
@@ -145,7 +146,7 @@ func (s *script) Handle(ctx context.Context, e event.Event) (hook.Outcome, error
 // input is the event JSON plus the fields Claude Code sends with every event.
 // Built-in tool names are capitalized as in Claude Code, so scripts written
 // for it match.
-func (s *script) input(e event.Event) ([]byte, error) {
+func (s *script) input(ctx context.Context, e event.Event) ([]byte, error) {
 	data, err := json.Marshal(e)
 	if err != nil {
 		return nil, fmt.Errorf("encode %s: %w", e.Name(), err)
@@ -158,6 +159,9 @@ func (s *script) input(e event.Event) ([]byte, error) {
 	fields["session_id"] = s.env.SessionID
 	fields["cwd"] = s.env.Dir
 	fields["permission_mode"] = s.env.PermissionMode
+	if sub, ok := event.AgentFrom(ctx); ok {
+		fields["agent_id"], fields["agent_type"] = sub.ID, sub.Type
+	}
 	if name, ok := fields["tool_name"].(string); ok {
 		fields["tool_name"] = claudeToolName(name)
 	}
@@ -166,7 +170,7 @@ func (s *script) input(e event.Event) ([]byte, error) {
 
 func claudeToolName(name string) string {
 	switch name {
-	case "bash", "read", "write", "edit", "glob":
+	case tool.Agent, tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob:
 		return strings.ToUpper(name[:1]) + name[1:]
 	default:
 		return name

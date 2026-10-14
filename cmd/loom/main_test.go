@@ -105,7 +105,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Errorf("out.txt = %q, %v; want the bash tool to have run in the workdir", data, err)
 	}
 	req := te.model.Requests()[0]
-	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 6 {
+	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 7 {
 		t.Errorf("first request = model %q, system %q, %d tools", req.Model, req.System, len(req.Tools))
 	}
 }
@@ -292,5 +292,48 @@ func TestRunHeadlessTodoAndInstructions(t *testing.T) {
 	msgs := te.model.Requests()[1].Messages
 	if result := msgs[len(msgs)-1].Content[0].(llm.ToolResult); result.IsError || result.Content != "[>] fix\n" {
 		t.Errorf("todo result = %+v, want the rendered list", result)
+	}
+}
+
+func TestRunHeadlessSubagent(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "agent", Input: json.RawMessage(`{"description":"find main","prompt":"where is main?"}`)}),
+		llmtest.TextReply("main is in main.go"),
+		llmtest.TextReply("Done."),
+	)
+	writeFile(t, filepath.Join(te.workdir, ".loom", "config.json"), `{"subagent": {"model": "cheap-model", "tools": ["read", "glob"]}}`)
+
+	if code := run(context.Background(), []string{"-p", "find main", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d; stderr: %s", code, te.stderr)
+	}
+	reqs := te.model.Requests()
+	sub := reqs[1]
+	if sub.Model != "cheap-model" || !strings.Contains(sub.System, "loom subagent") || len(sub.Tools) != 2 || len(sub.Messages) != 1 {
+		t.Errorf("subagent request = model %q, %d tools, %d messages, system %q", sub.Model, len(sub.Tools), len(sub.Messages), sub.System)
+	}
+	msgs := reqs[2].Messages
+	if result := msgs[len(msgs)-1].Content[0].(llm.ToolResult); result.IsError || result.Content != "main is in main.go" {
+		t.Errorf("agent result = %+v, want the subagent's report", result)
+	}
+}
+
+func TestRunHeadlessAgentTypes(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "agent", Input: json.RawMessage(`{"description":"review","prompt":"review it","subagent_type":"reviewer"}`)}),
+		llmtest.TextReply("looks fine"),
+		llmtest.TextReply("Done."),
+	)
+	writeFile(t, filepath.Join(te.workdir, ".loom", "agents", "reviewer.md"),
+		"---\nname: reviewer\ndescription: Reviews changes.\ntools: Read, Glob\nmodel: review-model\n---\nYou review code.\n")
+
+	if code := run(context.Background(), []string{"-p", "review", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d; stderr: %s", code, te.stderr)
+	}
+	reqs := te.model.Requests()
+	if spec := reqs[0].Tools[0]; spec.Name != "agent" || !strings.Contains(spec.Description, "- reviewer: Reviews changes.") {
+		t.Errorf("agent tool = %+v, want the reviewer type listed", spec)
+	}
+	if sub := reqs[1]; sub.Model != "review-model" || !strings.HasPrefix(sub.System, "You review code.") || len(sub.Tools) != 2 {
+		t.Errorf("subagent request = model %q, %d tools, system %q", sub.Model, len(sub.Tools), sub.System)
 	}
 }

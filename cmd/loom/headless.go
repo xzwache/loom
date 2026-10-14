@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
 	"github.com/xzwache/loom/internal/session"
+	"github.com/xzwache/loom/internal/subagent"
 	"github.com/xzwache/loom/internal/todo"
 	"github.com/xzwache/loom/internal/tool"
 	"github.com/xzwache/loom/internal/tool/bash"
@@ -109,7 +111,8 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	hook.On(hooks, policy.Hook)
 	hook.On(hooks, (&todo.Reminder{List: todos, After: cfg.TodoReminderTurns}).Hook)
 
-	system, err := systemPrompt(ctx, hooks, ws.Dir())
+	loader := prompt.Loader{Names: cfg.InstructionFiles, UserDir: filepath.Join(configHome(e.getenv), "loom")}
+	system, subSystem, err := systemPrompts(ctx, hooks, loader, ws.Dir())
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
 		return exitError
@@ -122,8 +125,43 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 		system += "\n\n" + start.AdditionalContext
 	}
 
+	// The subagent tools are picked before the agent tool is registered, so
+	// subagents cannot start their own.
+	subTools, err := tools.Only(cfg.Subagent.Tools...)
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: subagent tools: %v\n", err)
+		return exitError
+	}
+	model := e.newModel(cfg)
+	types, err := subagent.LoadTypes(filepath.Join(configHome(e.getenv), "loom", "agents"), filepath.Join(ws.Dir(), ".loom", "agents"))
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+	agentTool, err := subagent.New(agent.Agent{
+		Model:     model,
+		ModelID:   cmp.Or(cfg.Subagent.Model, cfg.Model),
+		System:    subSystem,
+		Tools:     subTools,
+		MaxTokens: cfg.MaxTokens,
+		Budget: agent.Budget{
+			MaxTurns:    cfg.Subagent.MaxTurns,
+			MaxTokens:   cfg.Subagent.MaxRunTokens,
+			MaxDuration: cfg.MaxDuration.Std(),
+		},
+		Hooks: hooks,
+		Log:   log,
+	}, types)
+	if err == nil {
+		err = tools.Register(agentTool)
+	}
+	if err != nil {
+		fmt.Fprintf(e.stderr, "loom: %v\n", err)
+		return exitError
+	}
+
 	a := &agent.Agent{
-		Model:     e.newModel(cfg),
+		Model:     model,
 		ModelID:   cfg.Model,
 		System:    system,
 		MaxTokens: cfg.MaxTokens,
@@ -235,17 +273,19 @@ func startTrace(hooks *hook.Pipeline, runID, workdir string, cfg config.Config, 
 	}, nil
 }
 
-// systemPrompt puts the fixed sections first and the project ones after, so
-// the cached prefix is shared across projects.
-func systemPrompt(ctx context.Context, hooks *hook.Pipeline, workdir string) (string, error) {
-	found, err := prompt.LoadInstructions(workdir)
+// systemPrompts returns the main prompt and the context every subagent gets
+// after its type's prompt. Fixed sections go first and the project ones after,
+// so the cached prefix is shared across projects.
+func systemPrompts(ctx context.Context, hooks *hook.Pipeline, loader prompt.Loader, workdir string) (main, sub string, err error) {
+	found, err := loader.Load(workdir)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, in := range found {
-		if _, err := hooks.Fire(ctx, event.InstructionsLoaded{Path: in.Path, Source: "project"}); err != nil {
-			return "", err
+		if _, err := hooks.Fire(ctx, event.InstructionsLoaded{Path: in.Path, Source: in.Source}); err != nil {
+			return "", "", err
 		}
 	}
-	return prompt.Build(prompt.Identity(), prompt.Guidelines(), prompt.Environment(workdir), prompt.Instructions(found)), nil
+	env, project := prompt.Environment(workdir), prompt.Instructions(found)
+	return prompt.Build(prompt.System(), env, project), prompt.Build(env, project), nil
 }

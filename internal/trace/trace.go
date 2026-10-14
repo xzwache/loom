@@ -21,12 +21,14 @@ import (
 const redacted = "[REDACTED]"
 
 type record struct {
-	V     int         `json:"v"`
-	Seq   int         `json:"seq"`
-	Time  time.Time   `json:"time"`
-	RunID string      `json:"run_id"`
-	Event event.Name  `json:"event"`
-	Data  event.Event `json:"data"`
+	V     int       `json:"v"`
+	Seq   int       `json:"seq"`
+	Time  time.Time `json:"time"`
+	RunID string    `json:"run_id"`
+	// AgentID is set for events from a subagent.
+	AgentID string      `json:"agent_id,omitempty"`
+	Event   event.Name  `json:"event"`
+	Data    event.Event `json:"data"`
 }
 
 // Recorder is a hook that writes each event it sees and never changes the outcome.
@@ -52,17 +54,19 @@ func New(w io.Writer, runID string, secrets ...string) *Recorder {
 	return &Recorder{w: w, runID: runID, redact: strings.NewReplacer(pairs...), now: time.Now}
 }
 
-func (r *Recorder) Handle(_ context.Context, e event.Event) (hook.Outcome, error) {
+func (r *Recorder) Handle(ctx context.Context, e event.Event) (hook.Outcome, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.seq++
+	sub, _ := event.AgentFrom(ctx)
 	line, err := json.Marshal(record{
-		V:     event.SchemaVersion,
-		Seq:   r.seq,
-		Time:  r.now().UTC(),
-		RunID: r.runID,
-		Event: e.Name(),
-		Data:  e,
+		AgentID: sub.ID,
+		V:       event.SchemaVersion,
+		Seq:     r.seq,
+		Time:    r.now().UTC(),
+		RunID:   r.runID,
+		Event:   e.Name(),
+		Data:    e,
 	})
 	if err != nil {
 		return hook.Outcome{}, fmt.Errorf("trace: %w", err)

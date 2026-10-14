@@ -35,7 +35,7 @@ var bashSchema = json.RawMessage(`{
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "bash",
+		Name: tool.Bash,
 		Description: "Run a bash command in the working directory and return its combined stdout and stderr. " +
 			"Each call starts a fresh shell; state such as cd or exported variables does not persist.",
 		InputSchema: bashSchema,

@@ -29,7 +29,7 @@ var _ tool.Tool = (*Tool)(nil)
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "glob",
+		Name: tool.Glob,
 		Description: "Find files by pattern, such as \"**/*.go\" or \"cmd/*/main.go\". " +
 			"Returns paths relative to the working directory, most recently modified first. Skips .git and node_modules.",
 		InputSchema: json.RawMessage(`{

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/xzwache/loom/internal/tool"
 )
 
 // Rule is one entry of an allow, ask or deny list: "Tool" or "Tool(specifier)".
@@ -19,10 +21,10 @@ type Rule struct {
 
 // Tools whose rules take a specifier, and the kind of specifier.
 var specKinds = map[string]string{
-	"bash":  "command",
-	"read":  "path",
-	"edit":  "path",
-	"write": "path",
+	tool.Bash:  "command",
+	tool.Read:  "path",
+	tool.Edit:  "path",
+	tool.Write: "path",
 }
 
 func ParseRule(s string) (Rule, error) {
@@ -82,8 +84,8 @@ func commandPattern(spec string) *regexp.Regexp {
 
 // covers reports whether a rule for r.tool applies to the named tool:
 // Edit rules also cover write, as in Claude Code.
-func (r Rule) covers(tool string) bool {
-	return r.tool == tool || (r.tool == "edit" && tool == "write")
+func (r Rule) covers(name string) bool {
+	return r.tool == name || (r.tool == tool.Edit && name == tool.Write)
 }
 
 func (r Rule) matchCommand(cmd string) bool {

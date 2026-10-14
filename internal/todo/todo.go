@@ -14,6 +14,7 @@ import (
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 type Status string
@@ -114,7 +115,7 @@ type Tool struct {
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "todo",
+		Name: tool.Todo,
 		Description: "Replace your todo list for the current work. Use it for tasks with several steps: " +
 			"list the steps, keep exactly one in_progress, and mark each completed as soon as it is done.",
 		InputSchema: json.RawMessage(`{
@@ -160,7 +161,10 @@ type Reminder struct {
 	idle    int
 }
 
-func (r *Reminder) Hook(_ context.Context, _ event.ModelRequest) (hook.Outcome, error) {
+func (r *Reminder) Hook(ctx context.Context, _ event.ModelRequest) (hook.Outcome, error) {
+	if _, sub := event.AgentFrom(ctx); sub {
+		return hook.Outcome{}, nil
+	}
 	if v := r.List.Version(); v != r.version {
 		r.version, r.idle = v, 0
 		return hook.Outcome{}, nil

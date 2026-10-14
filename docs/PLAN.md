@@ -42,8 +42,8 @@ The two seams that the later features depend on:
 | 4 | `event` catalog + `hook` chain, `trace` as a subscriber | s04 | Trace JSONL shows every step |
 | 4b | Command hooks compatible with Claude Code (JSON on stdin/stdout, exit 2 blocks) | — | An existing Claude Code hook script works unchanged |
 | 5 | `permission`: Claude Code-style rules and modes as a PreToolUse hook (see `docs/research/permissions.md`); the interactive ask prompt comes with interactive mode, as a PermissionRequest hook | s03 | Denied call returns an `is_error` result, and the denial is in the trace |
-| 6 | `prompt` sections (identity, guidelines, environment, AGENTS.md/CLAUDE.md) + `todo` tool and reminder (`todo_reminder_turns`) | s05 | Reminder fires after N turns without a todo update |
-| 7 | Subagents: `agent` tool spawning an Agent with a tool subset and budget | s06 | Parent receives one summary; no recursion |
+| 6 | `prompt` sections (fixed prompt in embedded `system.md`, environment, instruction files: AGENTS.md, CLAUDE.md, LOOM.md from `~/.config/loom` and the repo root down to the workspace, duplicates skipped, names set by `instruction_files`) + `todo` tool and reminder (`todo_reminder_turns`) | s05 | Reminder fires after N turns without a todo update |
+| 7 | Subagents: `agent` tool runs a fresh Agent of a type (`subagent_type`) defined by a markdown file; built-in `general-purpose` and `explore`, more in `~/.config/loom/agents/` and `.loom/agents/`; `subagent` config caps model, turns, tokens, tools | s06 | Parent receives one report; no recursion |
 | 8 | `skill` loading | s07 | Catalog in prompt, body loaded on demand |
 | 9 | `compact` chain with reports | s08 | Long-run test keeps context under the limit; reports in the trace |
 | 10 | `memory` store + tools | s09 | Facts survive a restart |
@@ -85,6 +85,10 @@ chain. A failing hook is logged and skipped, except on `PreToolUse`, where it de
 "Task" means only the step 11 task graph. A `-p` run is a headless run (`cmd/loom/headless.go`),
 and the subagent tool in step 7 is called `agent`.
 
+Events fired inside a subagent carry it in their context (`event.AgentFrom`): the trace adds
+`agent_id`, command hooks get `agent_id` and `agent_type`, and the subagent fires
+`SubagentStop` in place of `Stop` and no `UserPromptSubmit`.
+
 ## Command hooks (step 4b)
 
 `"hooks"` in any config file uses Claude Code's format and adds to the hooks of earlier files:
@@ -118,3 +122,23 @@ script's `allow` does not skip a permission `ask`. To approve automatically, ans
   OpenTelemetry spans and metrics, and per-run cost and cache-hit reports.
 - **Refactor `agent.loop`.** Split the ~100-line loop into small steps (budget check, model turn, stop-reason
   handling) so methods stay short.
+- **User-editable prompts and rules.** `system.md`, the built-in agent types and `floor_rules.json` are embedded in the
+  binary today, so users cannot change them. They stay embedded only as defaults: a file in
+  `~/.config/loom/` (user) or `.loom/` (project) replaces the prompt (e.g. `prompts/system.md`,
+  agent types already can be), `loom -print-prompt` shows the result, and `loom init-config` writes the
+  defaults out to edit. The floor stays extend-only: a project must not be able to weaken it, so its
+  defaults can be shown and added to, not removed.
+- **Updating instruction files.** AGENTS.md / CLAUDE.md / LOOM.md are read from disk at the start of every
+  run (not embedded); today only a person, or the model through the normal edit tool and its permission
+  check, changes them. Planned: `loom init` (the model explores the repo and drafts `AGENTS.md` for review)
+  and a "remember" path that appends a rule to `LOOM.md` and shows the diff. Model-written memory that is
+  not a project file is step 10.
+- **Subagent cost.** Count subagent tokens in the parent's `max_run_tokens` and in the session usage, and
+  run several `agent` calls from one turn in parallel.
+- **Readability refactor.** The code works but reads like dense, typical Go: long functions, inline JSON
+  handling, string building and repeated checks spread across packages. Pass over it to make it easy to
+  follow: small shared helpers where the same code repeats (JSON decoding of tool input, error
+  wrapping, file reading), named types and small interfaces where a concept is now implicit (e.g. tool
+  input structs, a prompt builder, the app wiring in `headless.go`), short methods, and package docs that
+  explain the flow. Constants for tool names are done (`internal/tool/names.go`); no grab-bag `utils`
+  package: each helper lives in the package that owns the concept.

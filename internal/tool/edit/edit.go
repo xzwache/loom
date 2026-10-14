@@ -20,7 +20,7 @@ var _ tool.Tool = (*Tool)(nil)
 
 func (t *Tool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
-		Name: "edit",
+		Name: tool.Edit,
 		Description: "Replace exact text in a file. old_string must match the file exactly, including whitespace, " +
 			"and without the line-number prefix that read adds. It must be unique unless replace_all is true.",
 		InputSchema: json.RawMessage(`{

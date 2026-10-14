@@ -13,6 +13,7 @@ import (
 
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
+	"github.com/xzwache/loom/internal/tool"
 )
 
 type Mode string
@@ -109,12 +110,12 @@ type request struct {
 // Check decides a tool call: deny rules first, then the mode, then ask and
 // allow rules, then the defaults (reads run, edits run in acceptEdits mode,
 // everything else asks).
-func (p *Policy) Check(tool string, input json.RawMessage) (hook.Decision, string) {
-	tool = strings.ToLower(tool)
-	switch tool {
-	case "bash":
+func (p *Policy) Check(name string, input json.RawMessage) (hook.Decision, string) {
+	name = strings.ToLower(name)
+	switch name {
+	case tool.Bash:
 		return p.checkBash(input)
-	case "read", "edit", "write":
+	case tool.Read, tool.Edit, tool.Write:
 		var in struct {
 			Path string `json:"file_path"`
 		}
@@ -123,7 +124,7 @@ func (p *Policy) Check(tool string, input json.RawMessage) (hook.Decision, strin
 		}
 		targets := p.resolve(in.Path)
 		return p.decide(request{
-			tool: tool,
+			tool: name,
 			match: func(r Rule, all bool) bool {
 				n := 0
 				for _, t := range targets {
@@ -133,11 +134,11 @@ func (p *Policy) Check(tool string, input json.RawMessage) (hook.Decision, strin
 				}
 				return n == len(targets) || (!all && n > 0)
 			},
-			free: tool == "read",
-			edit: tool != "read",
+			free: name == tool.Read,
+			edit: name != tool.Read,
 		})
 	default:
-		return p.decide(request{tool: tool, match: func(r Rule, _ bool) bool { return r.spec == "" }, free: freeTools[tool]})
+		return p.decide(request{tool: name, match: func(r Rule, _ bool) bool { return r.spec == "" }, free: freeTools[name]})
 	}
 }
 
@@ -150,7 +151,7 @@ func (p *Policy) checkBash(input json.RawMessage) (hook.Decision, string) {
 	}
 	cmds, err := parseCommands(in.Command)
 	if err != nil {
-		return p.decide(request{tool: "bash", match: func(r Rule, _ bool) bool { return r.spec == "" }})
+		return p.decide(request{tool: tool.Bash, match: func(r Rule, _ bool) bool { return r.spec == "" }})
 	}
 	if reason := p.floor.check(in.Command, cmds); reason != "" {
 		return hook.Deny, "never allowed: " + reason
@@ -160,7 +161,7 @@ func (p *Policy) checkBash(input json.RawMessage) (hook.Decision, string) {
 	for _, c := range cmds {
 		text := c.String()
 		d, why := p.decide(request{
-			tool:  "bash",
+			tool:  tool.Bash,
 			match: func(r Rule, _ bool) bool { return r.matchCommand(text) },
 			free:  c.safe(),
 		})
@@ -213,8 +214,9 @@ func rank(d hook.Decision) int {
 	}
 }
 
-// freeTools only read or only change loom's own state, so they run without a rule.
-var freeTools = map[string]bool{"glob": true, "todo": true}
+// freeTools only read or only change loom's own state, so they run without a
+// rule. A subagent's own tool calls are checked like any other.
+var freeTools = map[string]bool{tool.Agent: true, tool.Glob: true, tool.Todo: true}
 
 type filePath struct {
 	abs     string

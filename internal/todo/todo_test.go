@@ -77,3 +77,17 @@ func TestReminder(t *testing.T) {
 		}
 	}
 }
+
+func TestReminderSkipsSubagents(t *testing.T) {
+	ctx := event.WithAgent(context.Background(), event.Agent{ID: "agent-1"})
+	list := NewList(nil)
+	if err := list.Set(ctx, []Item{{Content: "fix", Status: Pending}}); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reminder{List: list, After: 1}
+	for range 3 {
+		if out, _ := r.Hook(ctx, event.ModelRequest{}); out.AdditionalContext != "" {
+			t.Fatal("reminded a subagent about the main todo list")
+		}
+	}
+}
