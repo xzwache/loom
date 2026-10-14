@@ -44,7 +44,7 @@ The two seams that the later features depend on:
 | 5 | `permission`: Claude Code-style rules and modes as a PreToolUse hook (see `docs/research/permissions.md`); the interactive ask prompt comes with interactive mode, as a PermissionRequest hook | s03 | Denied call returns an `is_error` result, and the denial is in the trace |
 | 6 | `prompt` sections (fixed prompt in embedded `system.md`, environment, instruction files: AGENTS.md, CLAUDE.md, LOOM.md from `~/.config/loom` and the repo root down to the workspace, duplicates skipped, names set by `instruction_files`) + `todo` tool and reminder (`todo_reminder_turns`) | s05 | Reminder fires after N turns without a todo update |
 | 7 | Subagents: `agent` tool runs a fresh Agent of a type (`subagent_type`) defined by a markdown file; built-in `general-purpose` and `explore`, more in `~/.config/loom/agents/` and `.loom/agents/`; `subagent` config caps model, turns, tokens, tools | s06 | Parent receives one report; no recursion |
-| 8 | `skill` loading | s07 | Catalog in prompt, body loaded on demand |
+| 8 | `skill`: Claude Code `SKILL.md` folders from `~/.config/loom/skills/` and `.loom/skills/` (project wins); names and descriptions listed in the `skill` tool, instructions and files loaded on demand; shared `frontmatter` parser | s07 | Catalog in the tool, body loaded on demand; `SkillLoaded`/`SkillUsed` in the trace |
 | 9 | `compact` chain with reports | s08 | Long-run test keeps context under the limit; reports in the trace |
 | 10 | `memory` store + tools | s09 | Facts survive a restart |
 | 11 | `task` graph + tools | s10 | Dependency order and cycle rejection tested |
@@ -117,7 +117,8 @@ script's `allow` does not skip a permission `ask`. To approve automatically, ans
   permission policy) and agent. That moves into one builder (e.g. `internal/app`) shared by headless mode and
   the TUI, so both get identical behavior.
 - **TUI.** An interactive terminal UI (Bubble Tea): streaming output, tool calls and diffs, the permission prompt
-  as a `PermissionRequest` hook (once / session / always), and slash commands.
+  as a `PermissionRequest` hook (once / session / always), and slash commands, among them `/reload` to re-read skills,
+  agent types and instruction files without a restart (the tool list changes, so it costs one prompt-cache miss).
 - **Observability.** A sink abstraction fed by the hook chain (`OnAll`): the JSONL trace, structured logs,
   OpenTelemetry spans and metrics, and per-run cost and cache-hit reports.
 - **Refactor `agent.loop`.** Split the ~100-line loop into small steps (budget check, model turn, stop-reason

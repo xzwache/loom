@@ -63,7 +63,78 @@ testdata/        fixtures (ignored by the go tool)
 - Make the zero value useful where possible; document when it is not.
 - Third-party dependencies need a reason in the PR description. Prefer the standard library.
 
-## 5. Errors
+## 5. Readable design
+
+Code is read far more than it is written. These rules come from refactors in this repository; each has
+a real example. When a design is not obvious, sketch it first (the types and one call site) and agree
+on it before writing the implementation.
+
+- **Name every concept with a type.** If a comment is needed to explain what a value means, it is a
+  missing type. Two bools that describe one thing become one enum; a `(decision, reason)` pair returned
+  everywhere becomes a struct.
+
+  ```go
+  // Before: free, edit bool. Which combinations are valid?
+  // After:
+  type Access int
+  const (ReadOnly Access = iota + 1; Edits; Other) // zero is invalid, never "read-only"
+
+  type Verdict struct {
+  	Decision hook.Decision
+  	Reason   string
+  }
+  ```
+- **Dispatch through a map of small interfaces, not a switch over names.** Each implementation owns its
+  input and lives in its own file; adding a case means adding an entry, not editing a switch. Unknown
+  keys get the strictest default.
+
+  ```go
+  type ToolGuard interface {
+  	Decide(input json.RawMessage) Verdict
+  }
+
+  guard, ok := p.guards[name]
+  if !ok {
+  	guard = plainGuard{tool: name, access: Other} // unknown tools need a rule
+  }
+  return guard.Decide(input)
+  ```
+- **Policy is data.** Behavior that varies by a setting (mode, kind, level) goes in a table, not in
+  `if mode == X && !y` checks spread across functions. The table is the documentation.
+
+  ```go
+  var modes = map[Mode]ModeSpec{
+  	ModeAcceptEdits: {Fallback: map[Access]Verdict{ReadOnly: allowed(), Edits: allowed()}},
+  	ModePlan:        {Override: map[Access]Verdict{Edits: denied("plan mode allows only reading"), ...}},
+  }
+  ```
+- **One place for an order of precedence.** When several rules decide something, one function applies
+  them, and its code reads like the numbered list in its comment (see `permission.(*Policy).evaluate`).
+  Security decisions are never spread across implementations, and a component can never declare itself
+  safe: the mapping lives with the policy, not with the thing being judged.
+- **No hidden modes.** No boolean parameters that switch behavior (`match(r, all bool)`), no closures
+  passed around as configuration. Give each behavior a named method: `fitsSome(rule)`, `fitsEvery(rule)`.
+- **No magic strings for identifiers.** Names used in more than one place are constants owned by the
+  package of the concept (`tool.Bash`, `tool.MainOnly`); rules about them are named data
+  (`slices.Contains(tool.MainOnly, name)`), not `==` chains.
+- **One concept per file, the same layout in every package:**
+
+  | File | Holds |
+  |---|---|
+  | `<concept>.go` | the type and the package doc, which explains the flow with an example |
+  | `parse.go` | reading a file format into the type (e.g. SKILL.md, agent files) |
+  | `load.go` | finding the files on disk, precedence between locations |
+  | `tool.go`, `guard.go`, ... | behavior |
+- **Shared code lives with its concept, never copied.** Two packages reading front matter means one
+  `frontmatter` package, not two parsers. A small generic helper next to its only users is fine
+  (`decodeInput[T]`); a `utils` package is not.
+- **Short functions at one level of abstraction.** A function either decides or does the steps; wiring
+  that grows past one screen is split into named steps (`openSession`, `addSkills`).
+- **Plain over clever.** Write a loop instead of a double negative (`!slices.ContainsFunc(..., !match)`);
+  write an `if` instead of indexing a map literal to pick a value; return a struct instead of packed
+  tuples.
+
+## 6. Errors
 
 - Return errors; don't panic. `panic` is for programmer bugs (impossible states) only, and
   a panic must never cross a package boundary.
@@ -75,7 +146,7 @@ testdata/        fixtures (ignored by the go tool)
   Never match on error strings.
 - `os.Exit` and `log.Fatal` are called **only in `main`**. `main` calls `run() error` and maps the result to an exit code.
 
-## 6. Context, concurrency and lifetimes
+## 7. Context, concurrency and lifetimes
 
 - Every function that does I/O, calls the model, runs a tool, or may block takes `ctx context.Context` as its
   **first parameter** and honors cancellation. Never store a context in a struct.
@@ -86,7 +157,7 @@ testdata/        fixtures (ignored by the go tool)
 - Protect shared state with a mutex next to the fields it guards. Don't copy structs that contain locks.
 - Tests run with `-race`, always.
 
-## 7. Production behavior (resilience and observability)
+## 8. Production behavior (resilience and observability)
 
 These are the operational rules expected of production services (and the ones Netflix-style
 resilience engineering is known for), applied to a CLI agent.
@@ -104,7 +175,7 @@ resilience engineering is known for), applied to a CLI agent.
   and are never sent to the model.
 - **Graceful shutdown**: SIGINT cancels the root context; the history stays valid (every `tool_use` has a `tool_result`).
 
-## 8. Agent-specific invariants
+## 9. Agent-specific invariants
 
 These rules come from the problem domain. Code that breaks them is a bug, even if tests pass.
 
@@ -121,7 +192,7 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
   so prompt caching works.
 - **No provider types leak**: SDK types stay inside `internal/llm`. The rest of loom uses loom's own message types.
 
-## 9. Testing
+## 10. Testing
 
 - Every package has tests. New behavior ships with tests in the same change.
 - **Unit tests are hermetic**: no network, no API key, no real `$HOME`. Use `t.TempDir()`, `t.Setenv()`,
@@ -137,7 +208,7 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
 - Test doubles live in `<pkg>test` packages (e.g. `llmtest`) and are named by behavior.
 - Golden files live under `testdata/` and are updated with a `-update` flag.
 
-## 10. Documentation and comments
+## 11. Documentation and comments
 
 - Every package has a package comment (`// Package agent runs ...`).
 - **Comment only what the code can't say.** Names should make most doc comments unnecessary;
@@ -153,13 +224,13 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
 - `TODO(username): ...` must reference an issue for anything that outlives the PR.
 - Design decisions that are not obvious from the code go in `docs/` (short ADR-style notes).
 
-## 11. Configuration
+## 12. Configuration
 
 - Precedence: defaults < user config (`~/.config/loom/`) < project config (`.loom/`) < env < flags.
 - Config is parsed once in `main` into typed structs, validated, then passed down. Packages don't read env vars.
 - Prices, model IDs and limits are config, not constants in code.
 
-## 12. Git workflow
+## 13. Git workflow
 
 - `main` is always green. All work goes through a branch and a PR, even solo.
 - Branches: `<type>/<short-topic>` with a full-word type: `feature/`, `fix/`, `docs/`, `chore/`, `refactor/`,
@@ -171,7 +242,7 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
 - Commits and PRs carry the author's identity only; no tool or AI attribution trailers.
 - Self-review the diff before requesting review or merging. Squash-merge PRs into `main`.
 
-## 13. Review checklist
+## 14. Review checklist
 
 Based on Google's code review guide, a change is ready when:
 
@@ -180,5 +251,6 @@ Based on Google's code review guide, a change is ready when:
 - [ ] Complexity: nothing is more general than today's need requires.
 - [ ] Tests: they are correct, hermetic, and would fail if the code broke.
 - [ ] Naming and comments are clear. Docs are updated.
-- [ ] The section 8 invariants still hold.
+- [ ] Readability: the section 5 rules hold; a reader can follow the flow without running it.
+- [ ] The section 9 invariants still hold.
 - [ ] `make check` passes.

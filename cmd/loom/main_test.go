@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -335,5 +336,42 @@ func TestRunHeadlessAgentTypes(t *testing.T) {
 	}
 	if sub := reqs[1]; sub.Model != "review-model" || !strings.HasPrefix(sub.System, "You review code.") || len(sub.Tools) != 2 {
 		t.Errorf("subagent request = model %q, %d tools, system %q", sub.Model, len(sub.Tools), sub.System)
+	}
+}
+
+func TestRunHeadlessSkills(t *testing.T) {
+	te := newTestEnv(t, nil,
+		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "skill", Input: json.RawMessage(`{"skill":"release"}`)}),
+		llmtest.TextReply("Released."),
+	)
+	writeFile(t, filepath.Join(te.workdir, ".loom", "skills", "release", "SKILL.md"),
+		"---\nname: release\ndescription: Cut a release.\n---\nTag, then push.\n")
+
+	if code := run(context.Background(), []string{"-p", "release it", "-trace", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d; stderr: %s", code, te.stderr)
+	}
+	reqs := te.model.Requests()
+	if !slices.ContainsFunc(reqs[0].Tools, func(s llm.ToolSpec) bool {
+		return s.Name == "skill" && strings.Contains(s.Description, "- release: Cut a release.")
+	}) {
+		t.Error("the skill tool does not list the release skill")
+	}
+	msgs := reqs[1].Messages
+	if result := msgs[len(msgs)-1].Content[0].(llm.ToolResult); result.IsError || !strings.HasSuffix(result.Content, "Tag, then push.") {
+		t.Errorf("skill result = %+v, want the instructions", result)
+	}
+
+	files, _ := filepath.Glob(filepath.Join(te.workdir, ".loom", "runs", "*.jsonl"))
+	if len(files) != 1 {
+		t.Fatalf("trace files = %v", files)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"event":"SkillLoaded"`, `"event":"SkillUsed"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("trace lacks %s", want)
+		}
 	}
 }

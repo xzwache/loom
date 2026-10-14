@@ -1,28 +1,22 @@
 // Package permission decides whether a tool call may run, from allow, ask and
 // deny rules in the style of Claude Code. It runs as a PreToolUse hook.
+//
+// A Policy holds one ToolGuard per tool. A guard reads its tool's input and
+// says what the call touches (a command, a file, or nothing in particular)
+// and what kind of access it is; the policy then applies the rules and the
+// mode in one fixed order (see evaluate), the same for every tool.
 package permission
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/tool"
-)
-
-type Mode string
-
-const (
-	ModeDefault     Mode = "default"
-	ModeAcceptEdits Mode = "acceptEdits"
-	ModePlan        Mode = "plan"
-	ModeBypass      Mode = "bypassPermissions"
 )
 
 type Settings struct {
@@ -34,52 +28,35 @@ type Settings struct {
 }
 
 type Policy struct {
-	mode    Mode
-	allow   []Rule
-	ask     []Rule
-	deny    []Rule
-	dir     string
-	realDir string
-	home    string
-	floor   *floor
+	mu     sync.RWMutex
+	mode   Mode
+	rules  RuleSet
+	guards map[string]ToolGuard
 }
 
 // New builds a policy for a workspace rooted at dir. home expands "~/" in
 // path rules; when empty, those rules never match.
 func New(s Settings, dir, home string) (*Policy, error) {
-	p := &Policy{mode: s.Mode, dir: filepath.Clean(dir), home: home}
-	switch p.mode {
-	case "":
-		p.mode = ModeDefault
-	case ModeDefault, ModeAcceptEdits, ModePlan, ModeBypass:
-	default:
-		return nil, fmt.Errorf("unknown permission mode %q", s.Mode)
-	}
-	var errs []error
-	for _, list := range []struct {
-		src []string
-		dst *[]Rule
-	}{{s.Allow, &p.allow}, {s.Ask, &p.ask}, {s.Deny, &p.deny}} {
-		for _, raw := range list.src {
-			r, err := ParseRule(raw)
-			if err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			*list.dst = append(*list.dst, r)
-		}
-	}
-	floor, err := newFloor(s.Floor)
-	if err != nil {
-		errs = append(errs, err)
-	}
-	p.floor = floor
-	if err := errors.Join(errs...); err != nil {
+	mode, modeErr := parseMode(s.Mode)
+	rules, rulesErr := newRuleSet(s)
+	floor, floorErr := newFloor(s.Floor)
+	if err := errors.Join(modeErr, rulesErr, floorErr); err != nil {
 		return nil, err
 	}
-	p.realDir = p.dir
-	if real, err := filepath.EvalSymlinks(p.dir); err == nil {
-		p.realDir = real
+
+	p := &Policy{mode: mode, rules: rules}
+	ws := newWorkspace(dir, home)
+	p.guards = map[string]ToolGuard{
+		tool.Bash:  bashGuard{policy: p, floor: floor},
+		tool.Read:  fileGuard{policy: p, ws: ws, tool: tool.Read, access: ReadOnly},
+		tool.Edit:  fileGuard{policy: p, ws: ws, tool: tool.Edit, access: Edits},
+		tool.Write: fileGuard{policy: p, ws: ws, tool: tool.Write, access: Edits},
+		tool.Glob:  plainGuard{policy: p, tool: tool.Glob, access: ReadOnly},
+		// These change only loom's own state. A subagent's own tool calls
+		// are checked like any other.
+		tool.Agent: plainGuard{policy: p, tool: tool.Agent, access: ReadOnly},
+		tool.Skill: plainGuard{policy: p, tool: tool.Skill, access: ReadOnly},
+		tool.Todo:  plainGuard{policy: p, tool: tool.Todo, access: ReadOnly},
 	}
 	return p, nil
 }
@@ -89,179 +66,66 @@ func (s Settings) Validate() error {
 	return err
 }
 
+func (p *Policy) Mode() Mode {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.mode
+}
+
+// SetMode switches the mode for the calls that follow, as interactive mode
+// does when the user changes it.
+func (p *Policy) SetMode(m Mode) error {
+	mode, err := parseMode(m)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.mode = mode
+	return nil
+}
+
 func (p *Policy) Hook(_ context.Context, e event.PreToolUse) (hook.Outcome, error) {
-	d, reason := p.Check(e.ToolName, e.ToolInput)
-	return hook.Outcome{Decision: d, Reason: reason}, nil
+	v := p.Decide(e.ToolName, e.ToolInput)
+	return hook.Outcome{Decision: v.Decision, Reason: v.Reason}, nil
 }
 
-// request is one thing to decide: a file call, a tool call, or one command
-// of a shell command line.
-type request struct {
-	tool string
-	// match reports whether a rule's specifier matches. all is set for allow
-	// rules, which must match every form of the target (a symlink and the
-	// file it points to); deny and ask rules need to match only one.
-	match func(r Rule, all bool) bool
-	// free requests run without a rule: reads and safe commands.
-	free bool
-	edit bool
-}
-
-// Check decides a tool call: deny rules first, then the mode, then ask and
-// allow rules, then the defaults (reads run, edits run in acceptEdits mode,
-// everything else asks).
-func (p *Policy) Check(name string, input json.RawMessage) (hook.Decision, string) {
+// Decide decides a call to the named tool. Tool names are case-insensitive;
+// a tool without its own guard needs a rule.
+func (p *Policy) Decide(name string, input json.RawMessage) Verdict {
 	name = strings.ToLower(name)
-	switch name {
-	case tool.Bash:
-		return p.checkBash(input)
-	case tool.Read, tool.Edit, tool.Write:
-		var in struct {
-			Path string `json:"file_path"`
-		}
-		if err := json.Unmarshal(input, &in); err != nil {
-			return hook.Deny, "cannot read the tool input: " + err.Error()
-		}
-		targets := p.resolve(in.Path)
-		return p.decide(request{
-			tool: name,
-			match: func(r Rule, all bool) bool {
-				n := 0
-				for _, t := range targets {
-					if r.matchPath(t, p.home) {
-						n++
-					}
-				}
-				return n == len(targets) || (!all && n > 0)
-			},
-			free: name == tool.Read,
-			edit: name != tool.Read,
-		})
-	default:
-		return p.decide(request{tool: name, match: func(r Rule, _ bool) bool { return r.spec == "" }, free: freeTools[name]})
+	guard, ok := p.guards[name]
+	if !ok {
+		guard = plainGuard{policy: p, tool: name, access: Other}
 	}
+	return guard.Decide(input)
 }
 
-func (p *Policy) checkBash(input json.RawMessage) (hook.Decision, string) {
-	var in struct {
-		Command string `json:"command"`
+// evaluate applies the rules and the mode to one call, in this order:
+//  1. a deny rule that fits some form of the target denies;
+//  2. the mode's override for this access, if it has one;
+//  3. an ask rule that fits some form asks;
+//  4. an allow rule that fits every form allows, so a symlink cannot reach a
+//     file the rule was not written for;
+//  5. the mode's fallback for this access, or ask.
+//
+// The floor is not here: guards check it first, and nothing overrides it.
+func (p *Policy) evaluate(tool string, access Access, t target) Verdict {
+	spec := modes[p.Mode()]
+	if r, ok := p.rules.deny.first(tool, t.fitsSome); ok {
+		return denied("denied by rule " + r.raw)
 	}
-	if err := json.Unmarshal(input, &in); err != nil {
-		return hook.Deny, "cannot read the tool input: " + err.Error()
+	if v, ok := spec.Override[access]; ok {
+		return v
 	}
-	cmds, err := parseCommands(in.Command)
-	if err != nil {
-		return p.decide(request{tool: tool.Bash, match: func(r Rule, _ bool) bool { return r.spec == "" }})
+	if r, ok := p.rules.ask.first(tool, t.fitsSome); ok {
+		return asked("rule " + r.raw + " asks for approval")
 	}
-	if reason := p.floor.check(in.Command, cmds); reason != "" {
-		return hook.Deny, "never allowed: " + reason
+	if _, ok := p.rules.allow.first(tool, t.fitsEvery); ok {
+		return allowed()
 	}
-
-	decision, reason := hook.Allow, ""
-	for _, c := range cmds {
-		text := c.String()
-		d, why := p.decide(request{
-			tool:  tool.Bash,
-			match: func(r Rule, _ bool) bool { return r.matchCommand(text) },
-			free:  c.safe(),
-		})
-		if rank(d) > rank(decision) {
-			decision, reason = d, why
-			if reason != "" && len(cmds) > 1 {
-				reason = fmt.Sprintf("%s (in %q)", reason, text)
-			}
-		}
+	if v, ok := spec.Fallback[access]; ok {
+		return v
 	}
-	return decision, reason
-}
-
-func (p *Policy) decide(rq request) (hook.Decision, string) {
-	for _, r := range p.deny {
-		if r.covers(rq.tool) && rq.match(r, false) {
-			return hook.Deny, "denied by rule " + r.raw
-		}
-	}
-	if p.mode == ModePlan && !rq.free {
-		return hook.Deny, "plan mode allows only reading"
-	}
-	if p.mode == ModeBypass {
-		return hook.Allow, ""
-	}
-	for _, r := range p.ask {
-		if r.covers(rq.tool) && rq.match(r, false) {
-			return hook.Ask, "rule " + r.raw + " asks for approval"
-		}
-	}
-	for _, r := range p.allow {
-		if r.covers(rq.tool) && rq.match(r, true) {
-			return hook.Allow, ""
-		}
-	}
-	if rq.free || (rq.edit && p.mode == ModeAcceptEdits) {
-		return hook.Allow, ""
-	}
-	return hook.Ask, "no rule allows this " + rq.tool + " call"
-}
-
-func rank(d hook.Decision) int {
-	switch d {
-	case hook.Deny:
-		return 2
-	case hook.Ask:
-		return 1
-	default:
-		return 0
-	}
-}
-
-// freeTools only read or only change loom's own state, so they run without a
-// rule. A subagent's own tool calls are checked like any other.
-var freeTools = map[string]bool{tool.Agent: true, tool.Glob: true, tool.Todo: true}
-
-type filePath struct {
-	abs     string
-	rel     string
-	outside bool
-}
-
-// resolve returns the path as given and, when it differs, the path with
-// symlinks resolved, both relative to the workspace.
-func (p *Policy) resolve(name string) []filePath {
-	abs := name
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(p.dir, abs)
-	}
-	abs = filepath.Clean(abs)
-	paths := []filePath{newFilePath(abs, p.dir)}
-	if real := realPath(abs); real != abs {
-		paths = append(paths, newFilePath(real, p.realDir))
-	}
-	return paths
-}
-
-func newFilePath(abs, dir string) filePath {
-	rel, err := filepath.Rel(dir, abs)
-	outside := err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	return filePath{abs: filepath.ToSlash(abs), rel: filepath.ToSlash(rel), outside: outside}
-}
-
-// realPath resolves symlinks in abs. For a file that does not exist yet it
-// resolves the directory, and for a dangling symlink the link itself, since
-// writing through it creates its target.
-func realPath(abs string) string {
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return real
-	}
-	dir := filepath.Dir(abs)
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = real
-	}
-	target, err := os.Readlink(abs)
-	if err != nil {
-		return filepath.Join(dir, filepath.Base(abs))
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(dir, target)
-	}
-	return filepath.Clean(target)
+	return asked("no rule allows this " + tool + " call")
 }

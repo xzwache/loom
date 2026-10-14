@@ -170,7 +170,7 @@ func (s *script) input(ctx context.Context, e event.Event) ([]byte, error) {
 
 func claudeToolName(name string) string {
 	switch name {
-	case tool.Agent, tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob:
+	case tool.Agent, tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob, tool.Skill:
 		return strings.ToUpper(name[:1]) + name[1:]
 	default:
 		return name
