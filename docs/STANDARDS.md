@@ -28,7 +28,8 @@ Google's order of priorities for readable code applies to every decision:
 ## 2. Repository layout
 
 ```
-cmd/loom/        package main only: flags, wiring, run() -> exit code
+cmd/loom/        package main only: flags, run() -> exit code, output
+internal/app/    wiring: builds the workspace, tools, hooks, agent and session from config
 internal/<pkg>/  everything else; nothing is importable from outside
 docs/            design notes, plans, this file
 testdata/        fixtures (ignored by the go tool)
@@ -38,7 +39,7 @@ testdata/        fixtures (ignored by the go tool)
 - One package = one concept (`agent`, `llm`, `tool`, `hook`, `permission`, ...).
   No `util`, `common`, `helpers` or `misc` packages.
 - Package names: short, lowercase, singular, no underscores. Call sites read well: `tool.Registry`, not `tool.ToolRegistry`.
-- Dependencies point inward: `cmd` wires everything; `agent` depends on interfaces, not on concrete providers.
+- Dependencies point inward: `app` wires everything and `cmd` only runs it; `agent` depends on interfaces, not on concrete providers.
   Import cycles are design bugs, so don't fix them with a shared "types" package.
 
 ## 3. Naming

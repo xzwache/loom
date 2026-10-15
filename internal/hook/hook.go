@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/xzwache/loom/internal/event"
@@ -48,17 +50,18 @@ type entry struct {
 
 // Pipeline runs hooks in registration order. A nil Pipeline has no hooks.
 type Pipeline struct {
-	entries []entry
+	Log         *slog.Logger
+	hookEntries []entry
 }
 
-func (c *Pipeline) OnAll(h Hook) { c.entries = append(c.entries, entry{hook: h}) }
-func (c *Pipeline) OnEvent(name event.Name, h Hook) {
-	c.entries = append(c.entries, entry{name: name, hook: h})
+func (p *Pipeline) OnAll(h Hook) { p.hookEntries = append(p.hookEntries, entry{hook: h}) }
+func (p *Pipeline) OnEvent(name event.Name, h Hook) {
+	p.hookEntries = append(p.hookEntries, entry{name: name, hook: h})
 }
 
-func On[E event.Event](c *Pipeline, f func(ctx context.Context, e E) (Outcome, error)) {
+func On[E event.Event](p *Pipeline, f func(ctx context.Context, e E) (Outcome, error)) {
 	var zero E
-	c.OnEvent(zero.Name(), Func(func(ctx context.Context, e event.Event) (Outcome, error) {
+	p.OnEvent(zero.Name(), Func(func(ctx context.Context, e event.Event) (Outcome, error) {
 		return f(ctx, e.(E))
 	}))
 }
@@ -67,28 +70,44 @@ func On[E event.Event](c *Pipeline, f func(ctx context.Context, e E) (Outcome, e
 // input or output rewritten by earlier ones. Deny and Halt stop the chain.
 // A failing hook is skipped and its error is returned with the outcome of
 // the others.
-func (c *Pipeline) Fire(ctx context.Context, e event.Event) (Outcome, error) {
+func (p *Pipeline) Fire(ctx context.Context, e event.Event) (Outcome, error) {
 	var out Outcome
-	if c == nil {
+	if p == nil {
 		return out, nil
 	}
 	var errs []error
-	for _, en := range c.entries {
-		if en.name != "" && en.name != e.Name() {
+	for _, hookEntry := range p.hookEntries {
+		if hookEntry.name != "" && hookEntry.name != e.Name() {
 			continue
 		}
-		o, err := handle(ctx, en.hook, e)
+		outcome, err := handle(ctx, hookEntry.hook, e)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s hook: %w", e.Name(), err))
 			continue
 		}
-		out = merge(out, o)
-		e = apply(e, o)
+		outcome = p.accepted(e.Name(), outcome)
+		out = merge(out, outcome)
+		e = apply(e, outcome)
 		if out.Decision == Deny || out.Halt {
 			break
 		}
 	}
 	return out, errors.Join(errs...)
+}
+
+// Notify fires an event whose outcome the caller does not use. A failing hook
+// is logged, never returned, so a broken script cannot stop loom.
+func (p *Pipeline) Notify(ctx context.Context, e event.Event) {
+	if _, err := p.Fire(ctx, e); err != nil {
+		p.log().Warn("hook failed", "event", e.Name(), "error", err)
+	}
+}
+
+func (p *Pipeline) log() *slog.Logger {
+	if p == nil || p.Log == nil {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return p.Log
 }
 
 func handle(ctx context.Context, h Hook, e event.Event) (out Outcome, err error) {

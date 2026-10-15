@@ -44,12 +44,12 @@ func TestFireRunsMatchingHooksInOrder(t *testing.T) {
 func TestFireMergesOutcomes(t *testing.T) {
 	c := &hook.Pipeline{}
 	hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) {
-		return hook.Outcome{Decision: hook.Allow, UpdatedInput: json.RawMessage(`{"command":"ls"}`), AdditionalContext: "a"}, nil
+		return hook.Outcome{Decision: hook.Allow, UpdatedInput: json.RawMessage(`{"command":"ls"}`)}, nil
 	})
 	var seen string
 	hook.On(c, func(_ context.Context, e event.PreToolUse) (hook.Outcome, error) {
 		seen = string(e.ToolInput)
-		return hook.Outcome{Decision: hook.Ask, Reason: "check", AdditionalContext: "b"}, nil
+		return hook.Outcome{Decision: hook.Ask, Reason: "check"}, nil
 	})
 
 	out, err := c.Fire(context.Background(), pre(`{"command":"rm"}`))
@@ -59,7 +59,7 @@ func TestFireMergesOutcomes(t *testing.T) {
 	if seen != `{"command":"ls"}` {
 		t.Errorf("second hook saw input %s, want the rewritten one", seen)
 	}
-	want := hook.Outcome{Decision: hook.Ask, Reason: "check", UpdatedInput: json.RawMessage(`{"command":"ls"}`), AdditionalContext: "a\nb"}
+	want := hook.Outcome{Decision: hook.Ask, Reason: "check", UpdatedInput: json.RawMessage(`{"command":"ls"}`)}
 	if diff := cmp.Diff(want, out); diff != "" {
 		t.Errorf("outcome mismatch (-want +got):\n%s", diff)
 	}
