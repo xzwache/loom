@@ -84,9 +84,11 @@ func Default() Config {
 	}
 }
 
-func DefaultPaths(configHome, workdir string) []string {
+// DefaultPaths lists the config files in the order they apply. userDir is
+// loom's folder in the user's config home, e.g. ~/.config/loom.
+func DefaultPaths(userDir, workdir string) []string {
 	return []string{
-		filepath.Join(configHome, "loom", "config.json"),
+		filepath.Join(userDir, "config.json"),
 		filepath.Join(workdir, ".loom", "config.json"),
 		filepath.Join(workdir, ".loom", "config.local.json"),
 	}

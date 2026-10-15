@@ -11,9 +11,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
+	"github.com/xzwache/loom/internal/app"
 	"github.com/xzwache/loom/internal/config"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/permission"
@@ -93,10 +93,13 @@ func run(ctx context.Context, args []string, e env) int {
 		return exitUsage
 	}
 
-	paths := config.DefaultPaths(configHome(e.getenv), e.workdir)
+	userDirs := app.UserDirs(e.getenv)
+	user := userDirs.User
+	paths := config.DefaultPaths(user, e.workdir)
 	if *configPath != "" {
 		paths = append(paths, *configPath)
 	}
+
 	cfg, err := config.Load(paths, e.getenv)
 	if err == nil && *permissionMode != "" {
 		cfg.Permissions.Mode = permission.Mode(*permissionMode)
@@ -128,11 +131,4 @@ func run(ctx context.Context, args []string, e env) int {
 	}
 	log := slog.New(slog.NewTextHandler(e.stderr, &slog.HandlerOptions{Level: level}))
 	return runHeadless(ctx, cfg, headlessOptions{task: *task, jsonOut: *jsonOut, trace: *traceRun, resume: *resume, latest: *latest}, log, e)
-}
-
-func configHome(getenv func(string) string) string {
-	if dir := getenv("XDG_CONFIG_HOME"); dir != "" {
-		return dir
-	}
-	return filepath.Join(getenv("HOME"), ".config")
 }

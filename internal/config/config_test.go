@@ -126,7 +126,7 @@ func TestValidateReportsAllErrors(t *testing.T) {
 }
 
 func TestDefaultPaths(t *testing.T) {
-	got := DefaultPaths("/home/u/.config", "/work")
+	got := DefaultPaths("/home/u/.config/loom", "/work")
 	want := []string{
 		"/home/u/.config/loom/config.json",
 		"/work/.loom/config.json",
