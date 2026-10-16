@@ -29,6 +29,7 @@ var answers = map[event.Name]Answer{
 	event.PostToolUse{}.Name():        AddsContext | RewritesOutput | Blocks,
 	event.PostToolUseFailure{}.Name(): AddsContext,
 	event.PostToolBatch{}.Name():      AddsContext,
+	event.PreCompact{}.Name():         AddsContext,
 	event.Stop{}.Name():               Blocks,
 	event.SubagentStop{}.Name():       Blocks,
 }

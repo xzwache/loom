@@ -205,8 +205,13 @@ type PreCompact struct {
 
 type PostCompact struct {
 	Trigger      string `json:"trigger"`
+	Strategy     string `json:"strategy"`
 	TokensBefore int    `json:"tokens_before"`
 	TokensAfter  int    `json:"tokens_after"`
+	// Failed counts parts the strategy had to leave, such as outputs it
+	// could not save; Error is the first reason.
+	Failed int    `json:"failed,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Display

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/xzwache/loom/internal/compact"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/llm"
 )
@@ -49,6 +50,12 @@ func (rs *runState) turn(ctx context.Context, res *Result) error {
 	if stop, over := rs.overBudget(*res); over {
 		res.Stop = stop
 		return nil
+	}
+	if c := rs.agent.Compaction; c != nil && c.Needed(rs.size(res)) {
+		rs.compact(ctx, res, compact.Auto, res.Messages, rs.size(res))
+		if res.Stop != "" {
+			return nil
+		}
 	}
 	resp, err := rs.send(ctx, res)
 	if err != nil || res.Stop != "" {
@@ -115,6 +122,7 @@ func (rs *runState) record(ctx context.Context, res *Result, resp llm.Response) 
 	if len(resp.Content) > 0 {
 		res.Messages = append(res.Messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
 	}
+	rs.contextSize, rs.sizedAt = compact.ContextSize(resp.Usage), len(res.Messages)
 	rs.fire(ctx, modelResponse(res.Turns, resp))
 }
 
@@ -126,6 +134,12 @@ func (rs *runState) handle(ctx context.Context, res *Result, resp llm.Response) 
 	if resp.StopReason == llm.StopToolUse {
 		rs.useTools(ctx, res, resp.Content)
 		return nil
+	}
+	if resp.StopReason == llm.StopContextWindowExceeded {
+		// Compacted: send the turn again. Halted by PreCompact: stop.
+		if rs.compactOnFull(ctx, res) || res.Stop != "" {
+			return nil
+		}
 	}
 	stop, ok := finalStops[resp.StopReason]
 	if !ok {

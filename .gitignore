@@ -12,6 +12,7 @@ coverage.*
 .env.*
 .loom/*.local.json
 .loom/runs/
+.loom/outputs/
 
 # Editors and OS
 .idea/

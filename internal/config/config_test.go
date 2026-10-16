@@ -125,6 +125,33 @@ func TestValidateReportsAllErrors(t *testing.T) {
 	}
 }
 
+func TestValidateCompaction(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*Compaction)
+		want   string
+	}{
+		{"default", func(*Compaction) {}, ""},
+		{"off", func(c *Compaction) { c.Threshold = 0 }, ""},
+		{"threshold above 1", func(c *Compaction) { c.Threshold = 1.5 }, "compaction.threshold"},
+		{"target above threshold", func(c *Compaction) { c.Threshold, c.Target = 0.6, 0.7 }, "compaction.target"},
+		{"negative keep_turns", func(c *Compaction) { c.KeepTurns = -1 }, "compaction.keep_turns"},
+		{"negative min_offload_tokens", func(c *Compaction) { c.MinOffloadTokens = -1 }, "compaction.min_offload_tokens"},
+		{"no retention", func(c *Compaction) { c.OutputsRetention = 0 }, "compaction.outputs_retention"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Model = "m"
+			tt.change(&cfg.Compaction)
+			err := cfg.Validate()
+			if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Errorf("Validate() = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestDefaultPaths(t *testing.T) {
 	got := DefaultPaths("/home/u/.config/loom", "/work")
 	want := []string{

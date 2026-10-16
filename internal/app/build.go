@@ -4,10 +4,13 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"time"
 
 	"github.com/xzwache/loom/internal/agent"
+	"github.com/xzwache/loom/internal/compact"
 	"github.com/xzwache/loom/internal/config"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
@@ -35,6 +38,8 @@ type builder struct {
 	ws    *tool.FileSystemWorkspace
 	todos *todo.List
 	tools *tool.Registry
+	// compaction is shared by the agent and its subagents; nil when off.
+	compaction *compact.Chain
 	// source is how the session started, for SessionStart.
 	source string
 	// system is the main agent's prompt; subagentContext is what every
@@ -44,6 +49,9 @@ type builder struct {
 }
 
 func newBuilder(cfg config.Config, opts Options) *builder {
+	if opts.Log == nil {
+		opts.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	return &builder{
 		cfg:  cfg,
 		opts: opts,
@@ -189,6 +197,40 @@ func (b *builder) startSession(ctx context.Context) error {
 	return nil
 }
 
+// newCompaction builds the compaction chain: offload old tool output to
+// .loom/outputs first, summarize when that is not enough. Output folders of
+// sessions older than outputs_retention are deleted here.
+func (b *builder) newCompaction(context.Context) error {
+	c := b.cfg.Compaction
+	if c.Threshold == 0 {
+		return nil
+	}
+	archive := compact.Archive{
+		Root:    b.ws.Dir(),
+		Dir:     filepath.Join(ProjectDir, "outputs"),
+		Session: b.app.Session.ID,
+		Redact:  b.cfg.APIKey.Redact,
+	}
+	if err := archive.Prune(c.OutputsRetention.Std(), time.Now()); err != nil {
+		b.app.log.Warn("old outputs not deleted", "error", err)
+	}
+	window := float64(c.ContextWindow)
+	b.compaction = &compact.Chain{
+		Strategies: []compact.Strategy{
+			compact.OffloadOutputs{KeepTurns: c.KeepTurns, MinTokens: c.MinOffloadTokens, Archive: archive},
+			compact.Summarize{
+				Model:     b.opts.Model,
+				ModelID:   cmp.Or(c.SummaryModel, b.cfg.Model),
+				MaxTokens: b.cfg.MaxTokens,
+				MaxInput:  c.ContextWindow / 2,
+			},
+		},
+		Trigger: int(window * c.Threshold),
+		Target:  int(window * c.Target),
+	}
+	return nil
+}
+
 // addSubagents registers the agent tool. Subagent tools are picked before it
 // is registered, so subagents cannot start their own.
 func (b *builder) addSubagents(context.Context) error {
@@ -202,14 +244,15 @@ func (b *builder) addSubagents(context.Context) error {
 	}
 	sub := b.cfg.Subagent
 	agentTool, err := subagent.New(agent.Agent{
-		Model:     b.opts.Model,
-		ModelID:   cmp.Or(sub.Model, b.cfg.Model),
-		System:    b.subagentContext,
-		Tools:     subTools,
-		MaxTokens: b.cfg.MaxTokens,
-		Budget:    agent.Budget{MaxTurns: sub.MaxTurns, MaxTokens: sub.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
-		Hooks:     b.app.hooks,
-		Log:       b.app.log,
+		Model:      b.opts.Model,
+		ModelID:    cmp.Or(sub.Model, b.cfg.Model),
+		System:     b.subagentContext,
+		Tools:      subTools,
+		MaxTokens:  b.cfg.MaxTokens,
+		Budget:     agent.Budget{MaxTurns: sub.MaxTurns, MaxTokens: sub.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
+		Compaction: b.compaction,
+		Hooks:      b.app.hooks,
+		Log:        b.app.log,
 	}, types)
 	if err != nil {
 		return err
@@ -219,14 +262,15 @@ func (b *builder) addSubagents(context.Context) error {
 
 func (b *builder) newAgent(context.Context) error {
 	b.app.agent = &agent.Agent{
-		Model:     b.opts.Model,
-		ModelID:   b.cfg.Model,
-		System:    b.system,
-		Tools:     b.tools,
-		MaxTokens: b.cfg.MaxTokens,
-		Budget:    agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
-		Hooks:     b.app.hooks,
-		Log:       b.app.log,
+		Model:      b.opts.Model,
+		ModelID:    b.cfg.Model,
+		System:     b.system,
+		Tools:      b.tools,
+		MaxTokens:  b.cfg.MaxTokens,
+		Budget:     agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
+		Compaction: b.compaction,
+		Hooks:      b.app.hooks,
+		Log:        b.app.log,
 	}
 	return nil
 }

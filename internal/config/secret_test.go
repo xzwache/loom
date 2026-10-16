@@ -53,3 +53,12 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+func TestSecretRedact(t *testing.T) {
+	if got := Secret("sk-1").Redact("key sk-1, again sk-1"); got != "key [REDACTED], again [REDACTED]" {
+		t.Errorf("Redact = %q", got)
+	}
+	if got := Secret("").Redact("text"); got != "text" {
+		t.Errorf("empty secret Redact = %q, want the text unchanged", got)
+	}
+}

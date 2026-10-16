@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xzwache/loom/internal/compact"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm"
@@ -27,6 +28,9 @@ type Agent struct {
 	Budget    Budget
 	Hooks     *hook.Pipeline
 	Log       *slog.Logger
+	// Compaction shrinks the history when it grows too big for the context
+	// window; nil turns it off.
+	Compaction *compact.Chain
 	// Subagent is set when this agent runs for another one. Its events then
 	// carry the subagent in their context, it fires SubagentStop in place of
 	// Stop, and it skips UserPromptSubmit.
@@ -79,12 +83,15 @@ type runState struct {
 	// stopHookActive is set once a Stop hook has sent the model back to work.
 	stopHookActive bool
 	subagents      usageMeter
+	// contextSize is the context's size in tokens after the last response,
+	// or after the last compaction, when the history had sizedAt messages.
+	contextSize int
+	sizedAt     int
+	// compactedOnFull is set once the run has compacted because the context
+	// was full; a second full context ends the run.
+	compactedOnFull bool
 }
 
-// Run continues the conversation in messages, which must end with a user
-// message. The returned history is always valid to send again: every tool
-// use has a result. An error means a harness or provider fault; budget stops,
-// hook halts and cancellation are reported through Result.Stop.
 func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error) {
 	if a.Model == nil {
 		return Result{}, errors.New("agent has no model")
