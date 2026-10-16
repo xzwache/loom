@@ -8,7 +8,6 @@ package app
 
 import (
 	"context"
-	"io"
 	"log/slog"
 
 	"github.com/xzwache/loom/internal/agent"
@@ -43,10 +42,10 @@ type App struct {
 
 // Build puts an App together. Close releases it.
 func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
-	if opts.Log == nil {
-		opts.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
-	b := newBuilder(cfg, opts)
+	return newBuilder(cfg, opts).build(ctx)
+}
+
+func (b *builder) build(ctx context.Context) (*App, error) {
 	steps := []func(context.Context) error{
 		b.openWorkspace,
 		b.addTools,
@@ -56,6 +55,7 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		b.addSkills,
 		b.loadPrompts,
 		b.startSession,
+		b.newCompaction,
 		b.addSubagents,
 		b.newAgent,
 	}

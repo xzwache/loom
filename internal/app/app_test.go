@@ -2,13 +2,16 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/xzwache/loom/internal/agent"
 	"github.com/xzwache/loom/internal/config"
-	"github.com/xzwache/loom/internal/hook/command"
+	"github.com/xzwache/loom/internal/event"
+	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm/llmtest"
 	"github.com/xzwache/loom/internal/session"
 )
@@ -47,22 +50,36 @@ func TestBuildFailsOnMissingWorkdir(t *testing.T) {
 
 func TestBuildIgnoresFailingNoticeHooks(t *testing.T) {
 	workdir := t.TempDir()
-	skillDir := filepath.Join(workdir, ProjectDir, "skills", "release")
-	if err := os.MkdirAll(skillDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: release\ndescription: Cut a release.\n---\nTag.\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, filepath.Join(workdir, ProjectDir, "skills", "release", "SKILL.md"), "---\nname: release\ndescription: Cut a release.\n---\nTag.\n")
+	writeFile(t, filepath.Join(workdir, "AGENTS.md"), "Be brief.\n")
 	cfg := config.Default()
 	cfg.Model = "test-model"
-	broken := []command.Matcher{{Hooks: []command.Handler{{Type: "command", Command: "echo '{bad'"}}}}
-	cfg.Hooks = command.Settings{"SkillLoaded": broken, "InstructionsLoaded": broken}
 	opts := Options{Workdir: workdir, Dirs: Dirs{User: t.TempDir(), State: t.TempDir()}, Model: llmtest.NewScripted()}
 
-	a, err := Build(context.Background(), cfg, opts)
+	b := newBuilder(cfg, opts)
+	var failed []event.Name
+	b.app.hooks.OnAll(hook.Func(func(_ context.Context, e event.Event) (hook.Outcome, error) {
+		failed = append(failed, e.Name())
+		return hook.Outcome{}, errors.New("broken hook")
+	}))
+	a, err := b.build(context.Background())
 	if err != nil {
-		t.Fatalf("Build failed because of a notice hook: %v", err)
+		t.Fatalf("build failed because of a notice hook: %v", err)
 	}
 	a.Close()
+	for _, want := range []event.Name{event.SkillLoaded{}.Name(), event.InstructionsLoaded{}.Name()} {
+		if !slices.Contains(failed, want) {
+			t.Errorf("the failing hook did not see %s; saw %v", want, failed)
+		}
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

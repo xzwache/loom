@@ -375,3 +375,33 @@ func TestRunHeadlessSkills(t *testing.T) {
 		}
 	}
 }
+
+func TestRunHeadlessCompaction(t *testing.T) {
+	full := llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "glob", Input: json.RawMessage(`{"pattern":"*"}`)})
+	full.Response.Usage = llm.Usage{InputTokens: 900}
+	te := newTestEnv(t, nil, full, llmtest.TextReply("Task: list files."), llmtest.TextReply("Done."))
+	writeFile(t, filepath.Join(te.workdir, ".loom", "config.json"),
+		`{"compaction": {"context_window": 1000, "threshold": 0.8, "target": 0.5, "keep_turns": 1}}`)
+
+	if code := run(context.Background(), []string{"-p", "list files", "-trace", "-quiet"}, te.env); code != exitOK {
+		t.Fatalf("run = %d; stderr: %s", code, te.stderr)
+	}
+	reqs := te.model.Requests()
+	if len(reqs) != 3 || len(reqs[2].Messages) != 1 || !strings.Contains(reqs[2].Messages[0].Content[0].(llm.Text).Text, "Task: list files.") {
+		t.Fatalf("got %d requests; the last should hold only the summary", len(reqs))
+	}
+
+	files, _ := filepath.Glob(filepath.Join(te.workdir, ".loom", "runs", "*.jsonl"))
+	if len(files) != 1 {
+		t.Fatalf("trace files = %v", files)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"event":"PreCompact"`, `"event":"PostCompact"`, `"strategy":"summarize"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("trace lacks %s", want)
+		}
+	}
+}

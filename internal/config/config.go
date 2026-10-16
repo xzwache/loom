@@ -46,6 +46,8 @@ type Config struct {
 	InstructionFiles []string `json:"instruction_files"`
 	// Subagent configures agents started with the agent tool.
 	Subagent Subagent `json:"subagent"`
+	// Compaction keeps long runs inside the context window.
+	Compaction Compaction `json:"compaction"`
 	// Permission lists and floor rules add up across files; the last file that
 	// sets mode wins.
 	Permissions permission.Settings `json:"permissions"`
@@ -61,6 +63,22 @@ type Subagent struct {
 	MaxTurns     int      `json:"max_turns"`
 	MaxRunTokens int      `json:"max_run_tokens"`
 	Tools        []string `json:"tools"`
+}
+
+// Compaction starts when the context reaches Threshold of ContextWindow and
+// shrinks it under Target of it. Threshold 0 turns it off. Old tool output is
+// offloaded to .loom/outputs first, except in the last KeepTurns turns, when
+// that frees at least MinOffloadTokens; a summary comes only when that is not
+// enough. An empty SummaryModel uses the main model. Offloaded output of other
+// sessions is deleted after OutputsRetention.
+type Compaction struct {
+	ContextWindow    int      `json:"context_window"`
+	Threshold        float64  `json:"threshold"`
+	Target           float64  `json:"target"`
+	KeepTurns        int      `json:"keep_turns"`
+	MinOffloadTokens int      `json:"min_offload_tokens"`
+	SummaryModel     string   `json:"summary_model,omitempty"`
+	OutputsRetention Duration `json:"outputs_retention"`
 }
 
 func Default() Config {
@@ -79,6 +97,14 @@ func Default() Config {
 			MaxTurns:     30,
 			MaxRunTokens: 500_000,
 			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob},
+		},
+		Compaction: Compaction{
+			ContextWindow:    200_000,
+			Threshold:        0.8,
+			Target:           0.5,
+			KeepTurns:        5,
+			MinOffloadTokens: 2000,
+			OutputsRetention: Duration(7 * 24 * time.Hour),
 		},
 		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
@@ -165,6 +191,8 @@ func (c Config) Validate() error {
 		{"max_tool_output", int64(c.MaxToolOutput)},
 		{"subagent.max_turns", int64(c.Subagent.MaxTurns)},
 		{"subagent.max_run_tokens", int64(c.Subagent.MaxRunTokens)},
+		{"compaction.context_window", int64(c.Compaction.ContextWindow)},
+		{"compaction.outputs_retention", int64(c.Compaction.OutputsRetention)},
 	}
 	for _, f := range positive {
 		if f.value <= 0 {
@@ -184,6 +212,9 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("subagent.tools cannot include %q", name))
 		}
 	}
+	if err := c.Compaction.validate(); err != nil {
+		errs = append(errs, err)
+	}
 	if c.MaxRetries < 0 {
 		errs = append(errs, fmt.Errorf("max_retries must not be negative, got %d", c.MaxRetries))
 	}
@@ -195,6 +226,20 @@ func (c Config) Validate() error {
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
+	}
+	return nil
+}
+
+func (c Compaction) validate() error {
+	switch {
+	case c.Threshold < 0 || c.Threshold > 1:
+		return fmt.Errorf("compaction.threshold must be between 0 and 1, got %g", c.Threshold)
+	case c.Threshold > 0 && (c.Target <= 0 || c.Target >= c.Threshold):
+		return fmt.Errorf("compaction.target must be above 0 and below threshold %g, got %g", c.Threshold, c.Target)
+	case c.KeepTurns < 0:
+		return fmt.Errorf("compaction.keep_turns must not be negative, got %d", c.KeepTurns)
+	case c.MinOffloadTokens < 0:
+		return fmt.Errorf("compaction.min_offload_tokens must not be negative, got %d", c.MinOffloadTokens)
 	}
 	return nil
 }
