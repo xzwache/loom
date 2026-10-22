@@ -20,6 +20,7 @@ type Tool struct {
 	Dir       string
 	Timeout   time.Duration
 	MaxOutput int
+	Env       childenv.Filter // hides secrets from commands; the zero value hides the defaults
 }
 
 var _ tool.Tool = (*Tool)(nil)
@@ -60,7 +61,7 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", in.Command) //nolint:gosec // G204: running the model's command is this tool's job
 	cmd.Dir = t.Dir
-	cmd.Env = childenv.WithoutSecrets(os.Environ())
+	cmd.Env = t.Env.Apply(os.Environ())
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

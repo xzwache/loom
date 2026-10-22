@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -81,11 +82,14 @@ func (b *builder) openWorkspace(context.Context) error {
 // their own steps.
 func (b *builder) addTools(context.Context) error {
 	hooks := b.app.hooks
+	if hidden := b.cfg.ChildEnv.Hidden(os.Environ()); len(hidden) > 0 {
+		b.app.log.Info("hidden from child processes", "names", hidden)
+	}
 	b.todos = todo.NewList(func(ctx context.Context, items []todo.Item) {
 		hooks.Notify(ctx, todo.Updated(items))
 	})
 	tools, err := tool.NewRegistry(
-		&bash.Tool{Dir: b.ws.Dir(), Timeout: b.cfg.BashTimeout.Std(), MaxOutput: b.cfg.MaxToolOutput},
+		&bash.Tool{Dir: b.ws.Dir(), Timeout: b.cfg.BashTimeout.Std(), MaxOutput: b.cfg.MaxToolOutput, Env: b.cfg.ChildEnv},
 		&read.Tool{Workspace: b.ws, MaxOutput: b.cfg.MaxToolOutput},
 		&write.Tool{Workspace: b.ws},
 		&edit.Tool{Workspace: b.ws},
@@ -137,6 +141,7 @@ func (b *builder) addHooks(context.Context) error {
 		SessionID:      b.app.Session.ID,
 		Dir:            b.ws.Dir(),
 		PermissionMode: string(b.cfg.Permissions.Mode),
+		ChildEnv:       b.cfg.ChildEnv,
 		Log:            b.app.log,
 	})
 	if err != nil {

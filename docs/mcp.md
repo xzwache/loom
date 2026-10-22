@@ -55,8 +55,12 @@ before it runs project servers; loom has no prompt in headless mode, so:
 ```
 
   Others are skipped, with a log line saying how to enable them.
-- Server processes get loom's environment without loom's own secrets such as the API key
-  (the same rule as command hooks), plus what their `env` sets.
+- Server processes get loom's environment through the same filter as bash and hooks
+  (`internal/childenv`): names that look like secrets (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, ...)
+  are left out, plus what their `env` sets. A server that needs a token gets it through its
+  `env` (`"GITHUB_TOKEN": "${GITHUB_TOKEN}"`). Config `child_env.hide` adds patterns in any file;
+  `child_env.pass` lets names through and may be set only in the user config. loom's own API key
+  is never passed.
 
 ## Tools
 

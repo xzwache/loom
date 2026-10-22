@@ -16,6 +16,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
@@ -50,6 +51,9 @@ type Config struct {
 	Compaction Compaction `json:"compaction"`
 	// MCP sets how MCP servers start; the servers are listed in .mcp.json.
 	MCP MCP `json:"mcp"`
+	// ChildEnv hides secrets from bash, hooks and MCP servers. Hide adds up
+	// across files; Pass may be set only in the user config.
+	ChildEnv childenv.Filter `json:"child_env"`
 	// Permission lists and floor rules add up across files; the last file that
 	// sets mode wins.
 	Permissions permission.Settings `json:"permissions"`
@@ -169,8 +173,8 @@ func mergeFile(cfg *Config, f File) error {
 	cfg.Hooks = nil
 	cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny = nil, nil, nil
 	cfg.Permissions.Floor = permission.FloorRules{}
-	trusted := cfg.MCP.EnabledProjectServers
-	cfg.MCP.EnabledProjectServers = nil
+	trusted, envBefore := cfg.MCP.EnabledProjectServers, cfg.ChildEnv
+	cfg.MCP.EnabledProjectServers, cfg.ChildEnv = nil, childenv.Filter{}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
@@ -181,6 +185,13 @@ func mergeFile(cfg *Config, f File) error {
 	}
 	if cfg.MCP.EnabledProjectServers == nil {
 		cfg.MCP.EnabledProjectServers = trusted
+	}
+	if cfg.ChildEnv.Pass != nil && !f.User {
+		return fmt.Errorf("config %s: child_env.pass may be set only in the user config", path)
+	}
+	cfg.ChildEnv.Hide = slices.Concat(envBefore.Hide, cfg.ChildEnv.Hide)
+	if cfg.ChildEnv.Pass == nil {
+		cfg.ChildEnv.Pass = envBefore.Pass
 	}
 	cfg.Permissions.Allow = slices.Concat(before.Allow, cfg.Permissions.Allow)
 	cfg.Permissions.Ask = slices.Concat(before.Ask, cfg.Permissions.Ask)
@@ -243,6 +254,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.MCP.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.ChildEnv.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	if c.MaxRetries < 0 {

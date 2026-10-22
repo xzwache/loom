@@ -50,6 +50,7 @@ type Env struct {
 	SessionID      string
 	Dir            string
 	PermissionMode string
+	ChildEnv       childenv.Filter // hides secrets from scripts
 	Log            *slog.Logger
 }
 
@@ -185,7 +186,7 @@ func (s *script) run(ctx context.Context, input []byte) (stdout, stderr string, 
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", s.handler.Command) //nolint:gosec // G204: hook commands come from the user's config on purpose
 	cmd.Dir = s.env.Dir
-	cmd.Env = append(childenv.WithoutSecrets(os.Environ()), "LOOM_PROJECT_DIR="+s.env.Dir, "CLAUDE_PROJECT_DIR="+s.env.Dir)
+	cmd.Env = append(s.env.ChildEnv.Apply(os.Environ()), "LOOM_PROJECT_DIR="+s.env.Dir, "CLAUDE_PROJECT_DIR="+s.env.Dir)
 	cmd.Stdin = bytes.NewReader(input)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut

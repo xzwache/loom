@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 )
@@ -218,6 +219,27 @@ func TestLoadTrustsProjectServersOnlyFromUserConfig(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "only in the user config") {
 			t.Errorf("Load with %s in a project file: error = %v, want rejected", content, err)
 		}
+	}
+}
+
+func TestLoadChildEnv(t *testing.T) {
+	dir := t.TempDir()
+	env := envFrom(map[string]string{EnvModel: "m"})
+	user := File{Path: writeFile(t, dir, "user.json", `{"child_env": {"hide": ["A_*"], "pass": ["GITHUB_TOKEN"]}}`), User: true}
+	project := File{Path: writeFile(t, dir, "project.json", `{"child_env": {"hide": ["B_*"]}}`)}
+
+	got, err := Load([]File{user, project}, env)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	want := childenv.Filter{Hide: []string{"A_*", "B_*"}, Pass: []string{"GITHUB_TOKEN"}}
+	if diff := cmp.Diff(want, got.ChildEnv); diff != "" {
+		t.Errorf("child_env mismatch (-want +got):\n%s", diff)
+	}
+
+	passing := File{Path: writeFile(t, dir, "passing.json", `{"child_env": {"pass": ["AWS_SECRET_ACCESS_KEY"]}}`)}
+	if _, err := Load([]File{user, passing}, env); err == nil || !strings.Contains(err.Error(), "only in the user config") {
+		t.Errorf("Load with child_env.pass in a project file: error = %v, want rejected", err)
 	}
 }
 
