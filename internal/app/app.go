@@ -55,6 +55,7 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 		b.addSkills,
 		b.loadPrompts,
 		b.startSession,
+		b.addMCP,
 		b.newCompaction,
 		b.addSubagents,
 		b.newAgent,

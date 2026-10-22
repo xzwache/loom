@@ -240,6 +240,33 @@ type CwdChanged struct {
 	NewCwd string `json:"new_cwd"`
 }
 
+// MCP servers. Source is "user" or "project"; none of them carries a
+// server's command, URL, env or headers, which may hold secrets.
+
+type MCPServerConnected struct {
+	Server    string   `json:"server"`
+	Source    string   `json:"source"`
+	Transport string   `json:"transport"` // "stdio" or "http"
+	Tools     []string `json:"tools"`     // registered names, e.g. mcp__github__create_issue
+}
+
+// MCPServerSkipped fires for a server loom chose not to start, such as a
+// project server missing from mcp.enabled_project_servers.
+type MCPServerSkipped struct {
+	Server string `json:"server"`
+	Source string `json:"source"`
+	Reason string `json:"reason"`
+}
+
+// MCPServerFailed fires when a server could not start. Stage "config" is a
+// bad entry or a missing ${VAR}; "connect" is the start, handshake or tool list.
+type MCPServerFailed struct {
+	Server string `json:"server"`
+	Source string `json:"source"`
+	Stage  string `json:"stage"`
+	Error  string `json:"error"`
+}
+
 var catalog = []Event{
 	SessionStart{},
 	SessionEnd{},
@@ -274,6 +301,9 @@ var catalog = []Event{
 	ConfigChange{},
 	FileChanged{},
 	CwdChanged{},
+	MCPServerConnected{},
+	MCPServerSkipped{},
+	MCPServerFailed{},
 }
 
 func Known(name Name) bool {
@@ -336,3 +366,6 @@ func (MessageDisplay) Name() Name     { return "MessageDisplay" }
 func (ConfigChange) Name() Name       { return "ConfigChange" }
 func (FileChanged) Name() Name        { return "FileChanged" }
 func (CwdChanged) Name() Name         { return "CwdChanged" }
+func (MCPServerConnected) Name() Name { return "MCPServerConnected" }
+func (MCPServerSkipped) Name() Name   { return "MCPServerSkipped" }
+func (MCPServerFailed) Name() Name    { return "MCPServerFailed" }
