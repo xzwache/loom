@@ -6,7 +6,7 @@
 // session:
 //
 //	servers, _ := mcp.Load(userFile, projectFile, trusted, os.LookupEnv)
-//	srv, err := mcp.Connect(ctx, "github", servers.Ready["github"], host)
+//	srv, err := mcp.Connect(ctx, "github", servers.Ready["github"].Config, host)
 //	defer srv.Close()
 //	for _, t := range srv.Tools() { registry.Register(t) } // mcp__github__create_issue, ...
 package mcp

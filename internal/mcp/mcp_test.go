@@ -97,9 +97,9 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantReady := map[string]ServerConfig{
-		"shared": {Command: "user-srv"},
-		"github": {Command: "gh-srv"},
+	wantReady := map[string]Entry{
+		"shared": {Config: ServerConfig{Command: "user-srv"}, Source: User},
+		"github": {Config: ServerConfig{Command: "gh-srv"}, Source: Project},
 	}
 	if diff := cmp.Diff(wantReady, got.Ready); diff != "" {
 		t.Errorf("Ready diff (-want +got):\n%s", diff)
@@ -107,8 +107,11 @@ func TestLoad(t *testing.T) {
 	if diff := cmp.Diff([]string{"evil"}, got.Untrusted); diff != "" {
 		t.Errorf("Untrusted diff (-want +got):\n%s", diff)
 	}
-	if len(got.Invalid) != 2 || got.Invalid["mine"] == nil || got.Invalid["broken"] == nil {
+	if len(got.Invalid) != 2 || got.Invalid["mine"].Err == nil || got.Invalid["broken"].Err == nil {
 		t.Errorf("Invalid = %v, want mine (unset variable) and broken (no url)", got.Invalid)
+	}
+	if got.Invalid["mine"].Source != User || got.Invalid["broken"].Source != Project {
+		t.Errorf("Invalid sources = mine %q, broken %q; want user, project", got.Invalid["mine"].Source, got.Invalid["broken"].Source)
 	}
 }
 
