@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
+	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/llm"
 	"github.com/xzwache/loom/internal/tool"
 )
@@ -58,6 +60,7 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", in.Command) //nolint:gosec // G204: running the model's command is this tool's job
 	cmd.Dir = t.Dir
+	cmd.Env = childenv.WithoutSecrets(os.Environ())
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

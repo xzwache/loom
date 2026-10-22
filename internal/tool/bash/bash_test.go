@@ -54,6 +54,20 @@ func TestBash(t *testing.T) {
 	}
 }
 
+func TestBashHidesSecrets(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("LOOM_TEST_VISIBLE", "yes")
+	b := &Tool{Dir: t.TempDir(), Timeout: 5 * time.Second, MaxOutput: 1000}
+
+	got, err := runBash(t, context.Background(), b, `echo "key=$ANTHROPIC_API_KEY visible=$LOOM_TEST_VISIBLE"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "key= visible=yes"; !strings.Contains(got, want) {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
 func TestBashInvalidInput(t *testing.T) {
 	b := &Tool{Timeout: time.Second, MaxOutput: 100}
 	for _, input := range []string{`{`, `{"command": ""}`} {
