@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -144,6 +147,34 @@ func TestScriptTimeout(t *testing.T) {
 	s := Settings{"PreToolUse": {{Hooks: []Handler{{Type: "command", Command: "sleep 5; exit 2", Timeout: 1}}}}}
 	if got, _ := fire(t, s, preBash("ls")); !cmp.Equal(got, hook.Outcome{}) {
 		t.Errorf("outcome after timeout = %+v, want none", got)
+	}
+}
+
+func TestScriptTimeoutKillsChildren(t *testing.T) {
+	s := Settings{"PreToolUse": {{Hooks: []Handler{{Type: "command", Command: `sleep 30 & echo $! > "$LOOM_PROJECT_DIR/pid"; wait`, Timeout: 1}}}}}
+	_, dir := fire(t, s, preBash("ls"))
+	data, err := os.ReadFile(filepath.Join(dir, "pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 40 {
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	t.Errorf("background child %d still runs after the hook timed out", pid)
+}
+
+func TestScriptOutputTooLarge(t *testing.T) {
+	s := one("PreToolUse", "", `head -c 2000000 /dev/zero | tr '\0' x >&2; exit 2`)
+	if got, _ := fire(t, s, preBash("ls")); !cmp.Equal(got, hook.Outcome{}) {
+		t.Errorf("outcome with oversized output = %+v, want none", got)
 	}
 }
 

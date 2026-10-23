@@ -65,9 +65,9 @@ func TestCommandRules(t *testing.T) {
 func TestCheck(t *testing.T) {
 	dir := t.TempDir()
 	settings := Settings{
-		Allow: []string{"Bash(go build *)", "bash(git commit *)", "Edit(docs/**)"},
+		Allow: []string{"Bash(go build *)", "bash(git commit *)", "Edit(docs/**)", "mcp__docs", "mcp__git"},
 		Ask:   []string{"Bash(git commit --amend *)"},
-		Deny:  []string{"Bash(git push *)", "Read(.env)", "edit(/go.mod)", "Read(~/.ssh/**)", "Read(//etc/**)"},
+		Deny:  []string{"Bash(git push *)", "Read(.env)", "edit(/go.mod)", "Read(~/.ssh/**)", "Read(//etc/**)", "mcp__docs__delete_page"},
 	}
 	tests := []struct {
 		name  string
@@ -96,6 +96,13 @@ func TestCheck(t *testing.T) {
 		{name: "anchored deny elsewhere", tool: "write", input: file("sub/go.mod"), want: hook.Ask},
 		{name: "glob is free", tool: "glob", input: json.RawMessage(`{"pattern":"**"}`), want: hook.Allow},
 		{name: "unknown tool asks", tool: "web_fetch", input: json.RawMessage(`{}`), want: hook.Ask},
+		{name: "mcp tool asks", tool: "mcp__github__create_issue", input: json.RawMessage(`{}`), want: hook.Ask},
+		{name: "mcp server rule allows its tools", tool: "mcp__docs__search", input: json.RawMessage(`{}`), want: hook.Allow},
+		{name: "mcp server rule is not a prefix", tool: "mcp__github__list", input: json.RawMessage(`{}`), want: hook.Ask},
+		{name: "mcp tool deny beats server allow", tool: "mcp__docs__delete_page", input: json.RawMessage(`{}`), want: hook.Deny},
+		{name: "acceptEdits keeps mcp asking", mode: ModeAcceptEdits, tool: "mcp__github__create_issue", input: json.RawMessage(`{}`), want: hook.Ask},
+		{name: "plan denies mcp", mode: ModePlan, tool: "mcp__github__list", input: json.RawMessage(`{}`), want: hook.Deny},
+		{name: "bypass allows mcp", mode: ModeBypass, tool: "mcp__github__create_issue", input: json.RawMessage(`{}`), want: hook.Allow},
 		{name: "acceptEdits allows edits", mode: ModeAcceptEdits, tool: "edit", input: file("main.go"), want: hook.Allow},
 		{name: "acceptEdits keeps commands", mode: ModeAcceptEdits, tool: "bash", input: bash("make"), want: hook.Ask},
 		{name: "plan denies edits", mode: ModePlan, tool: "edit", input: file("docs/x.md"), want: hook.Deny},

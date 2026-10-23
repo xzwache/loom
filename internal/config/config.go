@@ -16,6 +16,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
@@ -48,6 +49,11 @@ type Config struct {
 	Subagent Subagent `json:"subagent"`
 	// Compaction keeps long runs inside the context window.
 	Compaction Compaction `json:"compaction"`
+	// MCP sets how MCP servers start; the servers are listed in .mcp.json.
+	MCP MCP `json:"mcp"`
+	// ChildEnv hides secrets from bash, hooks and MCP servers. Hide adds up
+	// across files; Pass may be set only in the user config.
+	ChildEnv childenv.Filter `json:"child_env"`
 	// Permission lists and floor rules add up across files; the last file that
 	// sets mode wins.
 	Permissions permission.Settings `json:"permissions"`
@@ -81,6 +87,13 @@ type Compaction struct {
 	OutputsRetention Duration `json:"outputs_retention"`
 }
 
+// MCP: a project server in .mcp.json starts only when EnabledProjectServers
+// names it. StartupTimeout bounds connecting to all servers.
+type MCP struct {
+	EnabledProjectServers []string `json:"enabled_project_servers,omitempty"`
+	StartupTimeout        Duration `json:"startup_timeout"`
+}
+
 func Default() Config {
 	return Config{
 		MaxTokens:         16000,
@@ -106,24 +119,32 @@ func Default() Config {
 			MinOffloadTokens: 2000,
 			OutputsRetention: Duration(7 * 24 * time.Hour),
 		},
+		MCP:         MCP{StartupTimeout: Duration(30 * time.Second)},
 		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
 }
 
+// File is one config file. Only a User file may set
+// mcp.enabled_project_servers, so a repository cannot trust its own servers.
+type File struct {
+	Path string
+	User bool
+}
+
 // DefaultPaths lists the config files in the order they apply. userDir is
 // loom's folder in the user's config home, e.g. ~/.config/loom.
-func DefaultPaths(userDir, workdir string) []string {
-	return []string{
-		filepath.Join(userDir, "config.json"),
-		filepath.Join(workdir, ".loom", "config.json"),
-		filepath.Join(workdir, ".loom", "config.local.json"),
+func DefaultPaths(userDir, workdir string) []File {
+	return []File{
+		{Path: filepath.Join(userDir, "config.json"), User: true},
+		{Path: filepath.Join(workdir, ".loom", "config.json")},
+		{Path: filepath.Join(workdir, ".loom", "config.local.json")},
 	}
 }
 
-func Load(paths []string, getenv func(string) string) (Config, error) {
+func Load(files []File, getenv func(string) string) (Config, error) {
 	cfg := Default()
-	for _, p := range paths {
-		if err := mergeFile(&cfg, p); err != nil {
+	for _, f := range files {
+		if err := mergeFile(&cfg, f); err != nil {
 			return Config{}, err
 		}
 	}
@@ -139,7 +160,8 @@ func Load(paths []string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-func mergeFile(cfg *Config, path string) error {
+func mergeFile(cfg *Config, f File) error {
+	path := f.Path
 	data, err := os.ReadFile(path) //nolint:gosec // G304: config paths are chosen by the user on purpose
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -151,10 +173,25 @@ func mergeFile(cfg *Config, path string) error {
 	cfg.Hooks = nil
 	cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny = nil, nil, nil
 	cfg.Permissions.Floor = permission.FloorRules{}
+	trusted, envBefore := cfg.MCP.EnabledProjectServers, cfg.ChildEnv
+	cfg.MCP.EnabledProjectServers, cfg.ChildEnv = nil, childenv.Filter{}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if cfg.MCP.EnabledProjectServers != nil && !f.User {
+		return fmt.Errorf("config %s: mcp.enabled_project_servers may be set only in the user config", path)
+	}
+	if cfg.MCP.EnabledProjectServers == nil {
+		cfg.MCP.EnabledProjectServers = trusted
+	}
+	if cfg.ChildEnv.Pass != nil && !f.User {
+		return fmt.Errorf("config %s: child_env.pass may be set only in the user config", path)
+	}
+	cfg.ChildEnv.Hide = slices.Concat(envBefore.Hide, cfg.ChildEnv.Hide)
+	if cfg.ChildEnv.Pass == nil {
+		cfg.ChildEnv.Pass = envBefore.Pass
 	}
 	cfg.Permissions.Allow = slices.Concat(before.Allow, cfg.Permissions.Allow)
 	cfg.Permissions.Ask = slices.Concat(before.Ask, cfg.Permissions.Ask)
@@ -193,6 +230,7 @@ func (c Config) Validate() error {
 		{"subagent.max_run_tokens", int64(c.Subagent.MaxRunTokens)},
 		{"compaction.context_window", int64(c.Compaction.ContextWindow)},
 		{"compaction.outputs_retention", int64(c.Compaction.OutputsRetention)},
+		{"mcp.startup_timeout", int64(c.MCP.StartupTimeout)},
 	}
 	for _, f := range positive {
 		if f.value <= 0 {
@@ -213,6 +251,12 @@ func (c Config) Validate() error {
 		}
 	}
 	if err := c.Compaction.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.MCP.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.ChildEnv.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	if c.MaxRetries < 0 {
@@ -240,6 +284,20 @@ func (c Compaction) validate() error {
 		return fmt.Errorf("compaction.keep_turns must not be negative, got %d", c.KeepTurns)
 	case c.MinOffloadTokens < 0:
 		return fmt.Errorf("compaction.min_offload_tokens must not be negative, got %d", c.MinOffloadTokens)
+	}
+	return nil
+}
+
+func (m MCP) validate() error {
+	seen := map[string]bool{}
+	for _, name := range m.EnabledProjectServers {
+		switch {
+		case name == "":
+			return errors.New("mcp.enabled_project_servers: server name is empty")
+		case seen[name]:
+			return fmt.Errorf("mcp.enabled_project_servers: %q is listed twice", name)
+		}
+		seen[name] = true
 	}
 	return nil
 }

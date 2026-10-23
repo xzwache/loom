@@ -20,12 +20,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
+	"github.com/xzwache/loom/internal/procgroup"
 	"github.com/xzwache/loom/internal/tool"
 )
 
 const defaultTimeout = 60 * time.Second
+
+// maxOutput caps what a script may print on stdout and on stderr; a script
+// that prints more fails, so a half-read answer is never used.
+const maxOutput = 1 << 20
+
+// cappedBuffer keeps up to max bytes and notes when more arrived. It keeps
+// accepting writes, so the script is not stopped by a broken pipe. The buffer
+// is a field, not embedded: an embedded bytes.Buffer brings ReadFrom, which
+// io.Copy would use instead of Write, skipping the cap.
+type cappedBuffer struct {
+	buf  bytes.Buffer
+	max  int
+	over bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	keep := p
+	if room := b.max - b.buf.Len(); len(p) > room {
+		b.over = true
+		keep = p[:max(room, 0)]
+	}
+	b.buf.Write(keep)
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string { return b.buf.String() }
 
 // Settings maps an event name to its matchers, as in Claude Code's "hooks".
 type Settings map[event.Name][]Matcher
@@ -49,11 +77,9 @@ type Env struct {
 	SessionID      string
 	Dir            string
 	PermissionMode string
+	ChildEnv       childenv.Filter // hides secrets from scripts
 	Log            *slog.Logger
 }
-
-// Variables that scripts never see.
-var hiddenEnv = []string{"ANTHROPIC_API_KEY"}
 
 func (s Settings) Validate() error {
 	var errs []error
@@ -187,15 +213,19 @@ func (s *script) run(ctx context.Context, input []byte) (stdout, stderr string, 
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", s.handler.Command) //nolint:gosec // G204: hook commands come from the user's config on purpose
 	cmd.Dir = s.env.Dir
-	cmd.Env = append(scriptEnv(), "LOOM_PROJECT_DIR="+s.env.Dir, "CLAUDE_PROJECT_DIR="+s.env.Dir)
+	cmd.Env = append(s.env.ChildEnv.Apply(os.Environ()), "LOOM_PROJECT_DIR="+s.env.Dir, "CLAUDE_PROJECT_DIR="+s.env.Dir)
 	cmd.Stdin = bytes.NewReader(input)
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
+	out, errOut := &cappedBuffer{max: maxOutput}, &cappedBuffer{max: maxOutput}
+	cmd.Stdout, cmd.Stderr = out, errOut
+	procgroup.KillOnCancel(cmd)
 	cmd.WaitDelay = time.Second
 
 	err = cmd.Run()
 	if ctx.Err() != nil {
 		return "", "", 0, fmt.Errorf("timed out after %s", timeout)
+	}
+	if out.over || errOut.over {
+		return "", "", 0, fmt.Errorf("printed more than %d bytes", maxOutput)
 	}
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		return out.String(), errOut.String(), exit.ExitCode(), nil
@@ -204,13 +234,6 @@ func (s *script) run(ctx context.Context, input []byte) (stdout, stderr string, 
 		return "", "", 0, err
 	}
 	return out.String(), errOut.String(), 0, nil
-}
-
-func scriptEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		name, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(hiddenEnv, name)
-	})
 }
 
 // blocked maps exit code 2: a denial for tool permission events, a block

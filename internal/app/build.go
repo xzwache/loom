@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xzwache/loom/internal/agent"
@@ -81,11 +83,14 @@ func (b *builder) openWorkspace(context.Context) error {
 // their own steps.
 func (b *builder) addTools(context.Context) error {
 	hooks := b.app.hooks
+	if hidden := b.cfg.ChildEnv.Hidden(os.Environ()); len(hidden) > 0 {
+		b.app.log.Info("hidden from child processes", "names", hidden)
+	}
 	b.todos = todo.NewList(func(ctx context.Context, items []todo.Item) {
 		hooks.Notify(ctx, todo.Updated(items))
 	})
 	tools, err := tool.NewRegistry(
-		&bash.Tool{Dir: b.ws.Dir(), Timeout: b.cfg.BashTimeout.Std(), MaxOutput: b.cfg.MaxToolOutput},
+		&bash.Tool{Dir: b.ws.Dir(), Timeout: b.cfg.BashTimeout.Std(), MaxOutput: b.cfg.MaxToolOutput, Env: b.cfg.ChildEnv},
 		&read.Tool{Workspace: b.ws, MaxOutput: b.cfg.MaxToolOutput},
 		&write.Tool{Workspace: b.ws},
 		&edit.Tool{Workspace: b.ws},
@@ -137,6 +142,7 @@ func (b *builder) addHooks(context.Context) error {
 		SessionID:      b.app.Session.ID,
 		Dir:            b.ws.Dir(),
 		PermissionMode: string(b.cfg.Permissions.Mode),
+		ChildEnv:       b.cfg.ChildEnv,
 		Log:            b.app.log,
 	})
 	if err != nil {
@@ -234,9 +240,13 @@ func (b *builder) newCompaction(context.Context) error {
 // addSubagents registers the agent tool. Subagent tools are picked before it
 // is registered, so subagents cannot start their own.
 func (b *builder) addSubagents(context.Context) error {
-	subTools, err := b.tools.Only(b.cfg.Subagent.Tools...)
-	if err != nil {
-		return fmt.Errorf("subagent tools: %w", err)
+	subTools, unmatched := b.tools.Select(b.cfg.Subagent.Tools...)
+	for _, name := range unmatched {
+		if !strings.HasPrefix(name, tool.MCPPrefix) {
+			return fmt.Errorf("subagent tools: unknown tool %q", name)
+		}
+		// Its server did not start, which is reported already.
+		b.app.log.Warn("subagent tool not available", "tool", name)
 	}
 	types, err := subagent.LoadTypes(b.userPath("agents"), b.projectPath("agents"))
 	if err != nil {

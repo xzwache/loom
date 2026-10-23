@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 )
@@ -20,6 +21,14 @@ func writeFile(t *testing.T, dir, name, content string) string {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	return path
+}
+
+func projectFiles(paths ...string) []File {
+	files := make([]File, len(paths))
+	for i, p := range paths {
+		files[i] = File{Path: p}
+	}
+	return files
 }
 
 func envFrom(m map[string]string) func(string) string {
@@ -73,7 +82,7 @@ func TestLoad(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Load(tt.paths, envFrom(tt.env))
+			got, err := Load(projectFiles(tt.paths...), envFrom(tt.env))
 			if err != nil {
 				t.Fatalf("Load(%v) error: %v", tt.paths, err)
 			}
@@ -105,7 +114,7 @@ func TestLoadErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeFile(t, dir, strings.ReplaceAll(tt.name, " ", "_")+".json", tt.content)
-			_, err := Load([]string{path}, envFrom(nil))
+			_, err := Load(projectFiles(path), envFrom(nil))
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("Load(%s) error = %v, want containing %q", tt.content, err, tt.wantErr)
 			}
@@ -152,15 +161,85 @@ func TestValidateCompaction(t *testing.T) {
 	}
 }
 
+func TestValidateMCP(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*MCP)
+		want   string
+	}{
+		{"default", func(*MCP) {}, ""},
+		{"enabled servers", func(m *MCP) { m.EnabledProjectServers = []string{"github", "linear"} }, ""},
+		{"empty name", func(m *MCP) { m.EnabledProjectServers = []string{""} }, "server name is empty"},
+		{"duplicate", func(m *MCP) { m.EnabledProjectServers = []string{"github", "github"} }, `"github" is listed twice`},
+		{"no startup timeout", func(m *MCP) { m.StartupTimeout = 0 }, "mcp.startup_timeout"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Model = "m"
+			tt.change(&cfg.MCP)
+			err := cfg.Validate()
+			if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Errorf("Validate() = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestDefaultPaths(t *testing.T) {
 	got := DefaultPaths("/home/u/.config/loom", "/work")
-	want := []string{
-		"/home/u/.config/loom/config.json",
-		"/work/.loom/config.json",
-		"/work/.loom/config.local.json",
+	want := []File{
+		{Path: "/home/u/.config/loom/config.json", User: true},
+		{Path: "/work/.loom/config.json"},
+		{Path: "/work/.loom/config.local.json"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("DefaultPaths mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLoadTrustsProjectServersOnlyFromUserConfig(t *testing.T) {
+	dir := t.TempDir()
+	env := envFrom(map[string]string{EnvModel: "m"})
+	user := File{Path: writeFile(t, dir, "user.json", `{"mcp": {"enabled_project_servers": ["github"]}}`), User: true}
+	other := File{Path: writeFile(t, dir, "other.json", `{"mcp": {"startup_timeout": "5s"}}`)}
+
+	got, err := Load([]File{user, other}, env)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	want := MCP{EnabledProjectServers: []string{"github"}, StartupTimeout: Duration(5 * time.Second)}
+	if diff := cmp.Diff(want, got.MCP); diff != "" {
+		t.Errorf("mcp mismatch (-want +got):\n%s", diff)
+	}
+
+	for _, content := range []string{`{"mcp": {"enabled_project_servers": ["evil"]}}`, `{"mcp": {"enabled_project_servers": []}}`} {
+		project := File{Path: writeFile(t, dir, "project.json", content)}
+		_, err := Load([]File{user, project}, env)
+		if err == nil || !strings.Contains(err.Error(), "only in the user config") {
+			t.Errorf("Load with %s in a project file: error = %v, want rejected", content, err)
+		}
+	}
+}
+
+func TestLoadChildEnv(t *testing.T) {
+	dir := t.TempDir()
+	env := envFrom(map[string]string{EnvModel: "m"})
+	user := File{Path: writeFile(t, dir, "user.json", `{"child_env": {"hide": ["A_*"], "pass": ["GITHUB_TOKEN"]}}`), User: true}
+	project := File{Path: writeFile(t, dir, "project.json", `{"child_env": {"hide": ["B_*"]}}`)}
+
+	got, err := Load([]File{user, project}, env)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	want := childenv.Filter{Hide: []string{"A_*", "B_*"}, Pass: []string{"GITHUB_TOKEN"}}
+	if diff := cmp.Diff(want, got.ChildEnv); diff != "" {
+		t.Errorf("child_env mismatch (-want +got):\n%s", diff)
+	}
+
+	passing := File{Path: writeFile(t, dir, "passing.json", `{"child_env": {"pass": ["AWS_SECRET_ACCESS_KEY"]}}`)}
+	if _, err := Load([]File{user, passing}, env); err == nil || !strings.Contains(err.Error(), "only in the user config") {
+		t.Errorf("Load with child_env.pass in a project file: error = %v, want rejected", err)
 	}
 }
 
@@ -169,7 +248,7 @@ func TestLoadMergesPermissions(t *testing.T) {
 	user := writeFile(t, dir, "user.json", `{"permissions": {"mode": "plan", "allow": ["Bash(go test *)"], "deny": ["Read(.env)"]}}`)
 	project := writeFile(t, dir, "project.json", `{"permissions": {"mode": "acceptEdits", "allow": ["Edit(docs/**)"]}}`)
 
-	got, err := Load([]string{user, project}, envFrom(map[string]string{EnvModel: "m"}))
+	got, err := Load(projectFiles(user, project), envFrom(map[string]string{EnvModel: "m"}))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -183,7 +262,7 @@ func TestLoadMergesPermissions(t *testing.T) {
 	}
 
 	bad := writeFile(t, dir, "bad.json", `{"permissions": {"deny": ["Glob(x)"]}}`)
-	if _, err := Load([]string{bad}, envFrom(map[string]string{EnvModel: "m"})); err == nil {
+	if _, err := Load(projectFiles(bad), envFrom(map[string]string{EnvModel: "m"})); err == nil {
 		t.Error("Load with a bad rule: error = nil, want error")
 	}
 }
@@ -194,7 +273,7 @@ func TestLoadMergesHooks(t *testing.T) {
 	project := writeFile(t, dir, "project.json", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "b"}]}],
 		"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "c"}]}]}}`)
 
-	got, err := Load([]string{user, project}, envFrom(map[string]string{EnvModel: "m"}))
+	got, err := Load(projectFiles(user, project), envFrom(map[string]string{EnvModel: "m"}))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
@@ -207,7 +286,7 @@ func TestLoadMergesHooks(t *testing.T) {
 	}
 
 	bad := writeFile(t, dir, "bad.json", `{"hooks": {"Nope": []}}`)
-	if _, err := Load([]string{bad}, envFrom(map[string]string{EnvModel: "m"})); err == nil {
+	if _, err := Load(projectFiles(bad), envFrom(map[string]string{EnvModel: "m"})); err == nil {
 		t.Error("Load with an unknown hook event: error = nil, want error")
 	}
 }

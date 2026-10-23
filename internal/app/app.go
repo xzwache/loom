@@ -19,6 +19,7 @@ import (
 )
 
 type Options struct {
+	Version string // loom's version, sent to MCP servers
 	Workdir string
 	Dirs    Dirs
 	Model   llm.Model
@@ -55,6 +56,7 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 		b.addSkills,
 		b.loadPrompts,
 		b.startSession,
+		b.addMCP,
 		b.newCompaction,
 		b.addSubagents,
 		b.newAgent,

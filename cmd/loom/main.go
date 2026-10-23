@@ -97,7 +97,7 @@ func run(ctx context.Context, args []string, e env) int {
 	user := userDirs.User
 	paths := config.DefaultPaths(user, e.workdir)
 	if *configPath != "" {
-		paths = append(paths, *configPath)
+		paths = append(paths, config.File{Path: *configPath, User: true})
 	}
 
 	cfg, err := config.Load(paths, e.getenv)

@@ -82,10 +82,11 @@ func commandPattern(spec string) *regexp.Regexp {
 	return regexp.MustCompile(`^` + expr + `$`)
 }
 
-// covers reports whether a rule for r.tool applies to the named tool:
-// Edit rules also cover write, as in Claude Code.
+// covers reports whether a rule for r.tool applies to the named tool: Edit
+// rules also cover write, as in Claude Code, and an MCP server rule
+// ("mcp__github") covers each of its tools.
 func (r Rule) covers(name string) bool {
-	return r.tool == name || (r.tool == tool.Edit && name == tool.Write)
+	return tool.Covers(r.tool, name) || (r.tool == tool.Edit && name == tool.Write)
 }
 
 func (r Rule) matchCommand(cmd string) bool {
