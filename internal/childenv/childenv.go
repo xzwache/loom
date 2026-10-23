@@ -44,11 +44,17 @@ func (f Filter) Validate() error {
 	return errors.Join(errs...)
 }
 
+// NeverPassed reports loom's own secrets, which no child process may get,
+// not even through an MCP server's ${VAR}.
+func NeverPassed(name string) bool {
+	return slices.Contains(alwaysHidden, strings.ToUpper(name))
+}
+
 func (f Filter) Hides(name string) bool {
-	upper := strings.ToUpper(name)
-	if slices.Contains(alwaysHidden, upper) {
+	if NeverPassed(name) {
 		return true
 	}
+	upper := strings.ToUpper(name)
 	if slices.ContainsFunc(f.Pass, func(p string) bool { return strings.EqualFold(p, name) }) {
 		return false
 	}

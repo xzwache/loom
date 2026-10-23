@@ -47,7 +47,7 @@ type Server struct {
 // ctx bounds only the startup; a running server lives until Close.
 func Connect(ctx context.Context, name string, cfg ServerConfig, host Host) (*Server, error) {
 	var transport sdk.Transport
-	switch cfg.transport() {
+	switch cfg.Transport() {
 	case Stdio:
 		transport = &sdk.CommandTransport{Command: command(cfg, host)}
 	case HTTP:

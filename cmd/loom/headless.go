@@ -32,6 +32,7 @@ type headlessOptions struct {
 
 func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, log *slog.Logger, e env) int {
 	a, err := app.Build(ctx, cfg, app.Options{
+		Version: version,
 		Workdir: e.workdir,
 		Dirs:    app.UserDirs(e.getenv),
 		Model:   e.newModel(cfg),

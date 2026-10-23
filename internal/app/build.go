@@ -202,10 +202,6 @@ func (b *builder) startSession(ctx context.Context) error {
 	return nil
 }
 
-func (b *builder) addMCP(_ context.Context) error {
-	return nil
-}
-
 // newCompaction builds the compaction chain: offload old tool output to
 // .loom/outputs first, summarize when that is not enough. Output folders of
 // sessions older than outputs_retention are deleted here.

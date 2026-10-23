@@ -19,6 +19,7 @@ import (
 )
 
 type Options struct {
+	Version string // loom's version, sent to MCP servers
 	Workdir string
 	Dirs    Dirs
 	Model   llm.Model

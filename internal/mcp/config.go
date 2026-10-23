@@ -21,7 +21,7 @@ type ServerConfig struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-func (c ServerConfig) transport() string {
+func (c ServerConfig) Transport() string {
 	if c.Type == "" {
 		return Stdio
 	}
@@ -29,7 +29,7 @@ func (c ServerConfig) transport() string {
 }
 
 func (c ServerConfig) validate() error {
-	switch c.transport() {
+	switch c.Transport() {
 	case Stdio:
 		if c.Command == "" {
 			return errors.New("stdio server needs command")
