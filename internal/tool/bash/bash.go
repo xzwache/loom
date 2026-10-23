@@ -13,6 +13,7 @@ import (
 
 	"github.com/xzwache/loom/internal/childenv"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/procgroup"
 	"github.com/xzwache/loom/internal/tool"
 )
 
@@ -65,7 +66,7 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	killProcessGroupOnCancel(cmd)
+	procgroup.KillOnCancel(cmd)
 	cmd.WaitDelay = time.Second
 
 	err := cmd.Run()

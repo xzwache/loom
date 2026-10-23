@@ -86,8 +86,8 @@ output := tool.Truncate(out.String(), t.MaxOutput) // keeps start and end, cuts 
 A returned error becomes a tool result with `is_error: true` in the agent loop; the model reads
 it like any other result.
 
-Killing: on Unix the command runs in its own process group (`Setpgid`), and cancel kills the
-whole group, so `sleep 100 &` or a test runner's children die too. `WaitDelay` (1s) stops
+Killing: on Unix the command runs in its own process group (`Setpgid`, `internal/procgroup`),
+and cancel kills the whole group, so `sleep 100 &` or a test runner's children die too. `WaitDelay` (1s) stops
 `Run` from hanging on a child that keeps the output pipe open.
 
 ### command hooks: an answer for loom
@@ -106,8 +106,9 @@ cmd.Stdout, cmd.Stderr = &out, &errOut // kept apart: they mean different things
 The default timeout is 60s; a handler's `timeout` (seconds) overrides it. The pipeline then
 drops answer fields the event does not accept (`internal/hook/answer.go`).
 
-Known gaps: hooks do not run in their own process group, so a hook that starts background
-children leaves them running after a timeout; hook stdout has no size limit.
+Like bash, a hook runs in its own process group (`internal/procgroup`), so a timeout also kills
+what it started. stdout and stderr are capped at 1 MiB each; a script that prints more fails
+(logged, no answer used), so a half-read answer never counts.
 
 ### MCP servers: a session, not a one-shot
 
