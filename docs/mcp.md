@@ -61,6 +61,10 @@ before it runs project servers; loom has no prompt in headless mode, so:
   `env` (`"GITHUB_TOKEN": "${GITHUB_TOKEN}"`). Config `child_env.hide` adds patterns in any file;
   `child_env.pass` lets names through and may be set only in the user config. loom's own API key
   is never passed.
+- `${VAR}` in a server entry: loom's own key is never expanded. A project server also cannot
+  read variables `child_env` hides (`${GH_TOKEN}`) unless the user config lists them in
+  `child_env.pass`; the entry fails with stage `config`, naming the variables.
+- Server names must not be empty or contain `__`, so `mcp__<server>` is never ambiguous.
 
 ## Tools
 
@@ -71,13 +75,18 @@ before it runs project servers; loom has no prompt in headless mode, so:
 - **Permissions** work as today. `mcp__github` covers all of a server's tools,
   `mcp__github__create_issue` one tool, in allow, ask and deny lists. With no rule, an MCP tool
   asks, which in headless mode means denied, the same as any tool without a guard today.
+  `acceptEdits` does not cover MCP tools, `plan` denies them, `bypassPermissions` allows them.
+  `mcp__git` does not cover `mcp__github__*`: a server rule matches only up to the `__`.
 - **Hooks** see MCP calls like any tool call; command hook matchers work:
   `"matcher": "mcp__github__.*"`.
 - **Results**: text content is joined; images and other content become a short placeholder
   (`[image/png content not shown]`) for now; `isError` becomes a tool error. Output is truncated
   to `max_tool_output`, and compaction offloads it like any output.
 - **Subagents** get MCP tools only when `subagent.tools` lists them (`"mcp__github"` for a whole
-  server).
+  server); agent type files can name servers the same way. An MCP entry whose server did not
+  start is a warning, not a startup error; an unknown built-in tool still is.
+- The rule "`mcp__<server>` covers its tools" lives in one place, `tool.Covers`, used by
+  permission rules and tool lists alike.
 - **Timeouts**: connecting and listing tools have a startup timeout per server (default 30s);
   tool calls use `request_timeout`.
 - A server that fails to start or to list its tools logs a warning and is left out; loom runs

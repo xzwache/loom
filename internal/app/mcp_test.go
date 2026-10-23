@@ -109,6 +109,45 @@ func TestMCPReportsServersThatDoNotStart(t *testing.T) {
 	}
 }
 
+func TestMCPProjectServerCannotReadHiddenVariables(t *testing.T) {
+	t.Setenv("GH_TOKEN", "t")
+	url := mcpServer(t)
+	project := `{"mcpServers": {"docs": {"type": "http", "url": "` + url + `", "headers": {"Authorization": "Bearer ${GH_TOKEN}"}}}}`
+
+	cfg := config.Default()
+	cfg.MCP.EnabledProjectServers = []string{"docs"}
+	_, events := buildWithMCP(t, cfg, "", project)
+	if len(events) != 1 {
+		t.Fatalf("events = %v, want one", events)
+	}
+	if e, ok := events[0].(event.MCPServerFailed); !ok || e.Stage != "config" || !strings.Contains(e.Error, "GH_TOKEN") {
+		t.Errorf("event = %#v, want config failure naming GH_TOKEN", events[0])
+	}
+
+	cfg.ChildEnv.Pass = []string{"GH_TOKEN"}
+	_, events = buildWithMCP(t, cfg, "", project)
+	if len(events) != 1 || events[0].Name() != (event.MCPServerConnected{}).Name() {
+		t.Errorf("with GH_TOKEN passed: events = %v, want connected", events)
+	}
+}
+
+func TestSubagentToolsNameMCPServers(t *testing.T) {
+	url := mcpServer(t)
+	cfg := config.Default()
+	cfg.Subagent.Tools = []string{"read", "mcp__docs", "mcp__offline__search"}
+	if _, events := buildWithMCP(t, cfg, `{"mcpServers": {"docs": {"type": "http", "url": "`+url+`"}}}`, ""); len(events) != 1 {
+		t.Errorf("events = %v, want docs connected", events)
+	}
+
+	cfg.Subagent.Tools = []string{"read", "nope"}
+	workdir := t.TempDir()
+	cfg.Model = "test-model"
+	_, err := Build(context.Background(), cfg, Options{Workdir: workdir, Dirs: Dirs{Home: t.TempDir(), User: t.TempDir(), State: t.TempDir()}, Model: llmtest.NewScripted()})
+	if err == nil || !strings.Contains(err.Error(), `unknown tool "nope"`) {
+		t.Errorf("Build with an unknown built-in tool = %v, want error", err)
+	}
+}
+
 func TestMCPTrustedProjectServer(t *testing.T) {
 	url := mcpServer(t)
 	cfg := config.Default()

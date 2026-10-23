@@ -48,11 +48,7 @@ func New(template agent.Agent, types []Type) (*Tool, error) {
 	t := &Tool{template: template, types: map[string]prepared{}}
 	var names, list []string
 	for _, typ := range types {
-		tools, err := typeTools(all, typ, template.Log)
-		if err != nil {
-			return nil, err
-		}
-		t.types[typ.Name] = prepared{Type: typ, tools: tools}
+		t.types[typ.Name] = prepared{Type: typ, tools: typeTools(all, typ, template.Log)}
 		names = append(names, typ.Name)
 		list = append(list, "- "+typ.Name+": "+typ.Description)
 	}
@@ -81,19 +77,17 @@ func New(template agent.Agent, types []Type) (*Tool, error) {
 
 // typeTools limits a type to the subagent tools it lists. Tools the
 // subagent may not use are left out, so subagent.tools stays the ceiling.
-func typeTools(all *tool.Registry, typ Type, log *slog.Logger) (*tool.Registry, error) {
+func typeTools(all *tool.Registry, typ Type, log *slog.Logger) *tool.Registry {
 	if len(typ.Tools) == 0 {
-		return all, nil
+		return all
 	}
-	var names []string
-	for _, name := range typ.Tools {
-		if _, ok := all.Get(name); ok {
-			names = append(names, name)
-		} else if log != nil {
+	tools, unmatched := all.Select(typ.Tools...)
+	for _, name := range unmatched {
+		if log != nil {
 			log.Warn("agent type lists a tool subagents cannot use", "type", typ.Name, "tool", name, "path", typ.Path)
 		}
 	}
-	return all.Only(names...)
+	return tools
 }
 
 func (t *Tool) Spec() llm.ToolSpec { return t.spec }

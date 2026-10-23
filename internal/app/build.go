@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xzwache/loom/internal/agent"
@@ -239,9 +240,13 @@ func (b *builder) newCompaction(context.Context) error {
 // addSubagents registers the agent tool. Subagent tools are picked before it
 // is registered, so subagents cannot start their own.
 func (b *builder) addSubagents(context.Context) error {
-	subTools, err := b.tools.Only(b.cfg.Subagent.Tools...)
-	if err != nil {
-		return fmt.Errorf("subagent tools: %w", err)
+	subTools, unmatched := b.tools.Select(b.cfg.Subagent.Tools...)
+	for _, name := range unmatched {
+		if !strings.HasPrefix(name, tool.MCPPrefix) {
+			return fmt.Errorf("subagent tools: unknown tool %q", name)
+		}
+		// Its server did not start, which is reported already.
+		b.app.log.Warn("subagent tool not available", "tool", name)
 	}
 	types, err := subagent.LoadTypes(b.userPath("agents"), b.projectPath("agents"))
 	if err != nil {

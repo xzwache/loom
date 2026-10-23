@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"slices"
+	"strings"
 )
 
 // Source is the file a server came from.
@@ -45,7 +46,7 @@ type file struct {
 	Servers map[string]ServerConfig `json:"mcpServers"`
 }
 
-func Load(userFile, projectFile string, trusted []string, lookup func(string) (string, bool)) (Servers, error) {
+func Load(userFile, projectFile string, trusted []string, env Env) (Servers, error) {
 	user, err := readFile(userFile)
 	if err != nil {
 		return Servers{}, err
@@ -64,17 +65,21 @@ func Load(userFile, projectFile string, trusted []string, lookup func(string) (s
 			found.Untrusted = append(found.Untrusted, name)
 			continue
 		}
-		found.add(name, cfg, Project, lookup)
+		found.add(name, cfg, Project, env)
 	}
 	for name, cfg := range user {
-		found.add(name, cfg, User, lookup)
+		found.add(name, cfg, User, env)
 	}
 	slices.Sort(found.Untrusted)
 	return found, nil
 }
 
-func (s *Servers) add(name string, cfg ServerConfig, source Source, lookup func(string) (string, bool)) {
-	cfg, err := cfg.expand(lookup)
+func (s *Servers) add(name string, cfg ServerConfig, source Source, env Env) {
+	if name == "" || strings.Contains(name, "__") {
+		s.Invalid[name] = BadEntry{Source: source, Err: errors.New(`server name must not be empty or contain "__"`)}
+		return
+	}
+	cfg, err := cfg.expand(env, source)
 	if err == nil {
 		err = cfg.validate()
 	}

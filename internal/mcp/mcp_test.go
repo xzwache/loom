@@ -56,7 +56,7 @@ func TestExpand(t *testing.T) {
 		URL:     "https://${HOST:-localhost}/mcp",
 		Headers: map[string]string{"Authorization": "Bearer ${KEY:-}", "X-Empty": "${EMPTY:-none}"},
 	}
-	got, err := cfg.expand(lookupIn(map[string]string{"BIN": "srv", "HOME": "/h", "TOKEN": "t0", "EMPTY": ""}))
+	got, err := cfg.expand(Env{Lookup: lookupIn(map[string]string{"BIN": "srv", "HOME": "/h", "TOKEN": "t0", "EMPTY": ""})}, User)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,9 +74,35 @@ func TestExpand(t *testing.T) {
 
 func TestExpandMissing(t *testing.T) {
 	cfg := ServerConfig{Command: "srv", Env: map[string]string{"TOKEN": "${GITHUB_TOKEN}"}}
-	_, err := cfg.expand(lookupIn(nil))
+	_, err := cfg.expand(Env{Lookup: lookupIn(nil)}, User)
 	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
 		t.Errorf("expand with GITHUB_TOKEN unset = %v, want an error naming it", err)
+	}
+}
+
+func TestExpandRefused(t *testing.T) {
+	cfg := ServerConfig{Command: "srv", Env: map[string]string{"A": "${GH_TOKEN}", "B": "${HOME}", "C": "${SECRET:-x}"}}
+	env := Env{
+		Lookup:  lookupIn(map[string]string{"GH_TOKEN": "t", "HOME": "/h", "SECRET": "s"}),
+		Refused: func(source Source, name string) bool { return source == Project && name != "HOME" },
+	}
+	if _, err := cfg.expand(env, User); err != nil {
+		t.Errorf("user server: %v", err)
+	}
+	_, err := cfg.expand(env, Project)
+	if err == nil || !strings.Contains(err.Error(), "not given to project servers") || !strings.Contains(err.Error(), "GH_TOKEN") || !strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("project server = %v, want GH_TOKEN and SECRET refused, even with a default", err)
+	}
+}
+
+func TestLoadRejectsAmbiguousNames(t *testing.T) {
+	user := writeFile(t, t.TempDir(), "user.json", `{"mcpServers": {"a__b": {"command": "x"}, "": {"command": "y"}}}`)
+	got, err := Load(user, "", nil, Env{Lookup: lookupIn(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Ready) != 0 || got.Invalid["a__b"].Err == nil || got.Invalid[""].Err == nil {
+		t.Errorf("Load = %+v, want both names invalid", got)
 	}
 }
 
@@ -93,7 +119,7 @@ func TestLoad(t *testing.T) {
 		"broken":  {"type": "http"}
 	}}`)
 
-	got, err := Load(user, project, []string{"github", "broken"}, lookupIn(nil))
+	got, err := Load(user, project, []string{"github", "broken"}, Env{Lookup: lookupIn(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +143,7 @@ func TestLoad(t *testing.T) {
 
 func TestLoadMissingFiles(t *testing.T) {
 	dir := t.TempDir()
-	got, err := Load(filepath.Join(dir, "none.json"), "", nil, lookupIn(nil))
+	got, err := Load(filepath.Join(dir, "none.json"), "", nil, Env{Lookup: lookupIn(nil)})
 	if err != nil || len(got.Ready) != 0 {
 		t.Errorf("Load with no files = %+v, %v; want empty, nil", got, err)
 	}
@@ -125,7 +151,7 @@ func TestLoadMissingFiles(t *testing.T) {
 
 func TestLoadBadJSON(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "mcp.json", `{"mcpServers": [`)
-	if _, err := Load(path, "", nil, lookupIn(nil)); err == nil {
+	if _, err := Load(path, "", nil, Env{Lookup: lookupIn(nil)}); err == nil {
 		t.Error("Load of broken JSON succeeded")
 	}
 }

@@ -46,13 +46,24 @@ func (c ServerConfig) validate() error {
 
 var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
 
-func (c ServerConfig) expand(lookup func(string) (string, bool)) (ServerConfig, error) {
-	var missing []string
+// Env is what ${VAR} in a server config may read. Refused, when set, names
+// variables a server from the given source may not read, even with a default.
+type Env struct {
+	Lookup  func(name string) (string, bool)
+	Refused func(source Source, name string) bool
+}
+
+func (c ServerConfig) expand(env Env, source Source) (ServerConfig, error) {
+	var missing, refused []string
 	sub := func(s string) string {
 		return envRef.ReplaceAllStringFunc(s, func(ref string) string {
 			m := envRef.FindStringSubmatch(ref)
 			name, hasDefault, def := m[1], m[2] != "", m[3]
-			if v, ok := lookup(name); ok && (v != "" || !hasDefault) {
+			if env.Refused != nil && env.Refused(source, name) {
+				refused = append(refused, name)
+				return ""
+			}
+			if v, ok := env.Lookup(name); ok && (v != "" || !hasDefault) {
 				return v
 			}
 			if hasDefault {
@@ -68,8 +79,15 @@ func (c ServerConfig) expand(lookup func(string) (string, bool)) (ServerConfig, 
 	}
 	out.Env = subValues(c.Env, sub)
 	out.Headers = subValues(c.Headers, sub)
+	var errs []error
+	if len(refused) > 0 {
+		errs = append(errs, fmt.Errorf("environment variables not given to %s servers: %v", source, refused))
+	}
 	if len(missing) > 0 {
-		return ServerConfig{}, fmt.Errorf("environment variables not set: %v", missing)
+		errs = append(errs, fmt.Errorf("environment variables not set: %v", missing))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return ServerConfig{}, err
 	}
 	return out, nil
 }

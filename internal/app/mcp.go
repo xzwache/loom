@@ -24,7 +24,8 @@ const untrustedReason = "project server not in mcp.enabled_project_servers of th
 // server that is skipped, misconfigured or fails to start is logged and
 // reported as an event; loom runs without it. Servers close with the App.
 func (b *builder) addMCP(ctx context.Context) error {
-	servers, err := mcp.Load(b.userPath(MCPFile), filepath.Join(b.ws.Dir(), "."+MCPFile), b.cfg.MCP.EnabledProjectServers, lookupForMCP)
+	env := mcp.Env{Lookup: os.LookupEnv, Refused: b.refusedToMCP}
+	servers, err := mcp.Load(b.userPath(MCPFile), filepath.Join(b.ws.Dir(), "."+MCPFile), b.cfg.MCP.EnabledProjectServers, env)
 	if err != nil {
 		return err
 	}
@@ -74,13 +75,11 @@ func (b *builder) addMCP(ctx context.Context) error {
 	return nil
 }
 
-// lookupForMCP expands ${VAR} in .mcp.json. loom's own secrets read as unset,
-// so no server config can hand them out.
-func lookupForMCP(name string) (string, bool) {
-	if childenv.NeverPassed(name) {
-		return "", false
-	}
-	return os.LookupEnv(name)
+// refusedToMCP keeps ${VAR} in .mcp.json from handing out secrets: loom's own
+// to any server, and what child_env hides to project servers, which the
+// repository wrote. Names in child_env.pass go through.
+func (b *builder) refusedToMCP(source mcp.Source, name string) bool {
+	return childenv.NeverPassed(name) || source == mcp.Project && b.cfg.ChildEnv.Hides(name)
 }
 
 type startedServer struct {

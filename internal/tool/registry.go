@@ -39,19 +39,23 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return t, ok
 }
 
-// Only returns a registry with the named tools.
-func (r *Registry) Only(names ...string) (*Registry, error) {
-	sub := &Registry{tools: make(map[string]Tool, len(names))}
-	for _, name := range names {
-		t, ok := r.tools[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown tool %q", name)
+// Select returns a registry with the tools the entries cover (see Covers),
+// and the entries that cover none.
+func (r *Registry) Select(entries ...string) (*Registry, []string) {
+	sub := &Registry{tools: map[string]Tool{}}
+	var unmatched []string
+	for _, e := range entries {
+		found := false
+		for name, t := range r.tools {
+			if Covers(e, name) {
+				sub.tools[name], found = t, true
+			}
 		}
-		if err := sub.Register(t); err != nil {
-			return nil, err
+		if !found {
+			unmatched = append(unmatched, e)
 		}
 	}
-	return sub, nil
+	return sub, unmatched
 }
 
 func (r *Registry) Specs() []llm.ToolSpec {

@@ -95,8 +95,8 @@ const maxToolName = 64
 
 // ToolName is loom's name for a server's tool: mcp__<server>__<tool>, with
 // characters the API does not allow replaced by "_", cut to 64 characters.
-func ToolName(server, tool string) string {
-	name := "mcp__" + clean(server) + "__" + clean(tool)
+func ToolName(server, toolName string) string {
+	name := tool.MCPPrefix + clean(server) + "__" + clean(toolName)
 	if len(name) > maxToolName {
 		name = name[:maxToolName]
 	}
