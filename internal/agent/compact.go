@@ -30,7 +30,7 @@ func (rs *runState) compactOnFull(ctx context.Context, res *Result) bool {
 // run goes on with what it has.
 func (rs *runState) compact(ctx context.Context, res *Result, trigger compact.Trigger, messages []llm.Message, size int) bool {
 	pre := rs.fire(ctx, event.PreCompact{Trigger: string(trigger), Tokens: size})
-	if rs.halted {
+	if rs.isHalted() {
 		res.Stop = StopHalted
 		return false
 	}
@@ -40,6 +40,7 @@ func (rs *runState) compact(ctx context.Context, res *Result, trigger compact.Tr
 	}
 	for _, r := range reports {
 		res.Usage = res.Usage.Add(r.Usage)
+		rs.tokens.add(r.Usage.Total())
 		rs.report(ctx, trigger, r)
 	}
 	if len(reports) == 0 {

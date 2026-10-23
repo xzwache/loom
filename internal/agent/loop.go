@@ -37,7 +37,7 @@ func (rs *runState) submitPrompt(ctx context.Context, res *Result) {
 		return
 	}
 	out := rs.fire(ctx, event.UserPromptSubmit{Prompt: text(res.Messages[len(res.Messages)-1].Content)})
-	if out.Block || rs.halted {
+	if out.Block || rs.isHalted() {
 		rs.halt(out.Reason)
 		res.Stop = StopHalted
 		return
@@ -62,7 +62,7 @@ func (rs *runState) turn(ctx context.Context, res *Result) error {
 		return err
 	}
 	rs.record(ctx, res, resp)
-	if rs.halted {
+	if rs.isHalted() {
 		skipTools(res, resp.Content, "not run: a hook stopped the run")
 		res.Stop = StopHalted
 		return nil
@@ -71,11 +71,11 @@ func (rs *runState) turn(ctx context.Context, res *Result) error {
 }
 
 func (rs *runState) overBudget(res Result) (StopReason, bool) {
-	b := rs.agent.Budget
-	switch {
-	case res.Turns >= b.MaxTurns:
+	if res.Turns >= rs.agent.Budget.MaxTurns {
 		return StopMaxTurns, true
-	case b.MaxTokens > 0 && res.Usage.Total() >= b.MaxTokens:
+	}
+	if l, used, over := rs.tokens.exhausted(); over {
+		rs.overTokens = tokenStop{limit: l.limit, used: used, parent: l != rs.tokens}
 		return StopMaxRunTokens, true
 	}
 	return "", false
@@ -86,7 +86,7 @@ func (rs *runState) overBudget(res Result) (StopReason, bool) {
 func (rs *runState) send(ctx context.Context, res *Result) (llm.Response, error) {
 	a := rs.agent
 	req := rs.fire(ctx, event.ModelRequest{Turn: res.Turns + 1, Model: a.ModelID, MessageCount: len(res.Messages), ToolCount: len(rs.specs)})
-	if rs.halted {
+	if rs.isHalted() {
 		res.Stop = StopHalted
 		return llm.Response{}, nil
 	}
@@ -116,6 +116,7 @@ func (rs *runState) send(ctx context.Context, res *Result) (llm.Response, error)
 func (rs *runState) record(ctx context.Context, res *Result, resp llm.Response) {
 	res.Turns++
 	res.Usage = res.Usage.Add(resp.Usage)
+	rs.tokens.add(resp.Usage.Total())
 	rs.log.Info("model", "turn", res.Turns, "stop", resp.StopReason,
 		"input_tokens", resp.Usage.InputTokens, "output_tokens", resp.Usage.OutputTokens,
 		"cache_read_tokens", resp.Usage.CacheReadTokens)
@@ -154,7 +155,7 @@ func (rs *runState) handle(ctx context.Context, res *Result, resp llm.Response) 
 func (rs *runState) useTools(ctx context.Context, res *Result, content []llm.Block) {
 	res.Messages = append(res.Messages, rs.runTools(ctx, content))
 	res.Usage = res.Usage.Add(rs.subagents.take())
-	if rs.halted {
+	if rs.isHalted() {
 		res.Stop = StopHalted
 		return
 	}
@@ -177,7 +178,7 @@ func (rs *runState) end(ctx context.Context, res *Result, resp llm.Response, sto
 // reason to the model, and the run goes on.
 func (rs *runState) keepWorking(ctx context.Context, res *Result) bool {
 	out := rs.fire(ctx, rs.stopEvent(rs.stopHookActive, res.Text))
-	if !out.Block || rs.halted {
+	if !out.Block || rs.isHalted() {
 		return false
 	}
 	rs.stopHookActive = true
