@@ -6,10 +6,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xzwache/loom/internal/compact"
@@ -25,9 +27,12 @@ type Agent struct {
 	System    string
 	Tools     *tool.Registry
 	MaxTokens int
-	Budget    Budget
-	Hooks     *hook.Pipeline
-	Log       *slog.Logger
+	// MaxParallel caps how many Parallel tool calls (subagents) of one turn
+	// run at once; 0 or 1 runs every call in turn.
+	MaxParallel int
+	Budget      Budget
+	Hooks       *hook.Pipeline
+	Log         *slog.Logger
 	// Compaction shrinks the history when it grows too big for the context
 	// window; nil turns it off.
 	Compaction *compact.Chain
@@ -71,18 +76,29 @@ type Result struct {
 
 var errTimeBudget = errors.New("time budget exceeded")
 
+type tokenStop struct {
+	limit, used int
+	parent      bool
+}
+
 // runState holds the state of one Run.
 type runState struct {
-	agent      *Agent
-	log        *slog.Logger
-	tools      *tool.Registry
-	specs      []llm.ToolSpec
-	start      time.Time
+	agent *Agent
+	log   *slog.Logger
+	tools *tool.Registry
+	specs []llm.ToolSpec
+	start time.Time
+	// haltMu guards halted and haltReason: parallel tool calls fire hooks
+	// that may halt the run.
+	haltMu     sync.Mutex
 	halted     bool
 	haltReason string
 	// stopHookActive is set once a Stop hook has sent the model back to work.
 	stopHookActive bool
 	subagents      usageMeter
+	tokens         *tokenLedger
+	// overTokens is the budget that stopped the run: its own or a parent's.
+	overTokens tokenStop
 	// contextSize is the context's size in tokens after the last response,
 	// or after the last compaction, when the history had sizedAt messages.
 	contextSize int
@@ -110,6 +126,8 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	}
 	parent := meterFrom(ctx)
 	ctx = withMeter(ctx, &rs.subagents)
+	rs.tokens = &tokenLedger{limit: a.Budget.MaxTokens, parent: ledgerFrom(ctx)}
+	ctx = withLedger(ctx, rs.tokens)
 	if a.Budget.MaxDuration > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeoutCause(ctx, a.Budget.MaxDuration, errTimeBudget)
@@ -120,8 +138,11 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	err := rs.loop(ctx, &res)
 	res.Usage = res.Usage.Add(rs.subagents.take())
 	parent.add(res.Usage)
-	if res.Stop == StopHalted {
+	switch {
+	case res.Stop == StopHalted:
 		res.Detail = rs.haltReason
+	case res.Stop == StopMaxRunTokens && rs.overTokens.parent:
+		res.Detail = fmt.Sprintf("the parent run's token budget (%d) is used up", rs.overTokens.limit)
 	}
 	rs.finish(context.WithoutCancel(ctx), res, err)
 	return res, err
@@ -135,7 +156,7 @@ func (rs *runState) finish(ctx context.Context, res Result, err error) {
 	case StopMaxTurns:
 		rs.fire(ctx, event.BudgetExceeded{Budget: "turns", Limit: int64(b.MaxTurns), Used: int64(res.Turns)})
 	case StopMaxRunTokens:
-		rs.fire(ctx, event.BudgetExceeded{Budget: "tokens", Limit: int64(b.MaxTokens), Used: int64(res.Usage.Total())})
+		rs.fire(ctx, event.BudgetExceeded{Budget: "tokens", Limit: int64(rs.overTokens.limit), Used: int64(rs.overTokens.used)})
 	case StopTimeout:
 		rs.fire(ctx, event.BudgetExceeded{Budget: "duration_ms", Limit: b.MaxDuration.Milliseconds(), Used: time.Since(rs.start).Milliseconds()})
 	case StopDone, StopCancelled, StopTruncated, StopRefusal, StopContextFull, StopHalted:
@@ -164,7 +185,15 @@ func (rs *runState) fireErr(ctx context.Context, e event.Event) (hook.Outcome, e
 	return out, err
 }
 
+func (rs *runState) isHalted() bool {
+	rs.haltMu.Lock()
+	defer rs.haltMu.Unlock()
+	return rs.halted
+}
+
 func (rs *runState) halt(reason string) {
+	rs.haltMu.Lock()
+	defer rs.haltMu.Unlock()
 	if rs.halted {
 		return
 	}

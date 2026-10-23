@@ -272,15 +272,16 @@ func (b *builder) addSubagents(context.Context) error {
 
 func (b *builder) newAgent(context.Context) error {
 	b.app.agent = &agent.Agent{
-		Model:      b.opts.Model,
-		ModelID:    b.cfg.Model,
-		System:     b.system,
-		Tools:      b.tools,
-		MaxTokens:  b.cfg.MaxTokens,
-		Budget:     agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
-		Compaction: b.compaction,
-		Hooks:      b.app.hooks,
-		Log:        b.app.log,
+		Model:       b.opts.Model,
+		ModelID:     b.cfg.Model,
+		System:      b.system,
+		Tools:       b.tools,
+		MaxTokens:   b.cfg.MaxTokens,
+		MaxParallel: b.cfg.Subagent.MaxParallel,
+		Budget:      agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
+		Compaction:  b.compaction,
+		Hooks:       b.app.hooks,
+		Log:         b.app.log,
 	}
 	return nil
 }

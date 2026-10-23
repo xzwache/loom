@@ -45,3 +45,48 @@ func (m *usageMeter) take() llm.Usage {
 	m.usage = llm.Usage{}
 	return u
 }
+
+// tokenLedger counts a run's tokens as they are used, its subagents'
+// included: every count also goes to the parent's ledger. A run checks its
+// own limit and every parent's before each turn, so parallel subagents stop
+// once the run that started them is out of tokens, not only when that run
+// next checks.
+type tokenLedger struct {
+	mu     sync.Mutex
+	used   int
+	limit  int // 0: no limit
+	parent *tokenLedger
+}
+
+type ledgerKey struct{}
+
+func withLedger(ctx context.Context, l *tokenLedger) context.Context {
+	return context.WithValue(ctx, ledgerKey{}, l)
+}
+
+func ledgerFrom(ctx context.Context) *tokenLedger {
+	l, _ := ctx.Value(ledgerKey{}).(*tokenLedger)
+	return l
+}
+
+func (l *tokenLedger) add(n int) {
+	for ; l != nil; l = l.parent {
+		l.mu.Lock()
+		l.used += n
+		l.mu.Unlock()
+	}
+}
+
+// exhausted returns the nearest ledger, this one first, whose limit is
+// reached, and what it has used.
+func (l *tokenLedger) exhausted() (*tokenLedger, int, bool) {
+	for ; l != nil; l = l.parent {
+		l.mu.Lock()
+		used := l.used
+		l.mu.Unlock()
+		if l.limit > 0 && used >= l.limit {
+			return l, used, true
+		}
+	}
+	return nil, 0, false
+}

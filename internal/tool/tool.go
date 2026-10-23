@@ -15,6 +15,14 @@ type Tool interface {
 	Run(ctx context.Context, input json.RawMessage) (string, error)
 }
 
+// Parallel marks a tool whose calls may run at the same time as other
+// Parallel calls in the same turn, such as the agent tool: each subagent
+// works in its own context.
+type Parallel interface {
+	Tool
+	RunsInParallel()
+}
+
 func Truncate(s string, limit int) string {
 	if len(s) <= limit {
 		return s

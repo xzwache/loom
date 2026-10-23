@@ -64,8 +64,10 @@ type Config struct {
 
 // Subagent limits each subagent run. An empty Model uses the main model, so
 // a cheaper model can take over searches and other delegated work.
+// MaxParallel caps how many subagents of one turn run at once.
 type Subagent struct {
 	Model        string   `json:"model,omitempty"`
+	MaxParallel  int      `json:"max_parallel"`
 	MaxTurns     int      `json:"max_turns"`
 	MaxRunTokens int      `json:"max_run_tokens"`
 	Tools        []string `json:"tools"`
@@ -107,6 +109,7 @@ func Default() Config {
 		TodoReminderTurns: 3,
 		InstructionFiles:  slices.Clone(prompt.DefaultInstructionFiles),
 		Subagent: Subagent{
+			MaxParallel:  4,
 			MaxTurns:     30,
 			MaxRunTokens: 500_000,
 			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob},
@@ -226,6 +229,7 @@ func (c Config) Validate() error {
 		{"request_timeout", int64(c.RequestTimeout)},
 		{"bash_timeout", int64(c.BashTimeout)},
 		{"max_tool_output", int64(c.MaxToolOutput)},
+		{"subagent.max_parallel", int64(c.Subagent.MaxParallel)},
 		{"subagent.max_turns", int64(c.Subagent.MaxTurns)},
 		{"subagent.max_run_tokens", int64(c.Subagent.MaxRunTokens)},
 		{"compaction.context_window", int64(c.Compaction.ContextWindow)},
