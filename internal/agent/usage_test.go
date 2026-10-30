@@ -47,3 +47,17 @@ func TestRunSubagentUsageCountsInBudget(t *testing.T) {
 		t.Errorf("stop = %s after %d turns, want %s after 1", res.Stop, res.Turns, StopMaxRunTokens)
 	}
 }
+
+func TestRunAfterCountsSpentTokens(t *testing.T) {
+	model := llmtest.NewScripted(reply(llm.StopToolUse, use("n", "echo")), reply(llm.StopEndTurn, llm.Text{Text: "unreached"}))
+	a := newAgent(t, model, echoTool())
+	a.Budget.MaxTokens = 20
+	// 15 spent before the run, then the first turn's 11 go over 20.
+	res, err := a.RunAfter(context.Background(), prompt(), llm.Usage{InputTokens: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stop != StopMaxRunTokens || res.Turns != 1 || res.Usage.InputTokens < 15 {
+		t.Errorf("RunAfter = %s after %d turns, usage %+v; want max_run_tokens after 1 with the spent tokens", res.Stop, res.Turns, res.Usage)
+	}
+}

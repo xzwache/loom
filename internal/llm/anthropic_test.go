@@ -73,7 +73,7 @@ func TestSendMessageResponse(t *testing.T) {
 		Content: []Block{
 			Thinking{Thinking: "check files", Signature: "sig_1"},
 			RedactedThinking{Data: "opaque"},
-			Text{Text: "Listing files."},
+			ModelText("Listing files."),
 			ToolUse{ID: "tu_1", Name: "bash", Input: json.RawMessage(`{"command": "ls"}`)},
 		},
 		StopReason: StopToolUse,
@@ -98,7 +98,7 @@ func TestSendMessageRequest(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"],"additionalProperties":false}`),
 		}},
 		Messages: []Message{
-			{Role: RoleUser, Content: []Block{Text{Text: "list files"}}},
+			{Role: RoleUser, Content: []Block{UserText("list files"), SystemText(KindMemoryHint, "read tests-need-db")}},
 			{Role: RoleAssistant, Content: []Block{
 				Thinking{Thinking: "check files", Signature: "sig_1"},
 				RedactedThinking{Data: "opaque"},
@@ -131,7 +131,10 @@ func TestSendMessageRequest(t *testing.T) {
 			}
 		}],
 		"messages": [
-			{"role": "user", "content": [{"type": "text", "text": "list files"}]},
+			{"role": "user", "content": [
+				{"type": "text", "text": "list files"},
+				{"type": "text", "text": "<loom-note kind=\"memory_hint\">\nread tests-need-db\n</loom-note>"}
+			]},
 			{"role": "assistant", "content": [
 				{"type": "thinking", "thinking": "check files", "signature": "sig_1"},
 				{"type": "redacted_thinking", "data": "opaque"},

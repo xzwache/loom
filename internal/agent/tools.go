@@ -41,7 +41,7 @@ func (rs *runState) runTools(ctx context.Context, content []llm.Block) llm.Messa
 		outcomes = append(outcomes, event.ToolOutcome{ToolUseID: uses[i].ID, ToolName: uses[i].Name, IsError: res.IsError})
 	}
 	if out := rs.fire(ctx, event.PostToolBatch{Results: outcomes}); out.AdditionalContext != "" {
-		results = append(results, llm.Text{Text: out.AdditionalContext})
+		results = append(results, llm.SystemText(llm.KindHookContext, out.AdditionalContext))
 	}
 	return llm.Message{Role: llm.RoleUser, Content: results}
 }

@@ -48,7 +48,8 @@ func runHeadless(ctx context.Context, cfg config.Config, opts headlessOptions, l
 	defer a.Close()
 
 	res, err := a.Run(ctx, opts.task)
-	a.End(context.WithoutCancel(ctx), endReason(res, err))
+	// Memory calls at the end count in this invocation's usage.
+	res.Usage = res.Usage.Add(a.End(context.WithoutCancel(ctx), endReason(res, err)))
 	if err != nil {
 		fmt.Fprintf(e.stderr, "loom: %v\n", err)
 		return exitError

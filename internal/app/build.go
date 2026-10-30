@@ -48,6 +48,8 @@ type builder struct {
 	// subagent gets after its type's prompt.
 	system          string
 	subagentContext string
+	// subagentMemory is the read-only memory tool; nil when memory is off.
+	subagentMemory tool.Tool
 }
 
 func newBuilder(cfg config.Config, opts Options) *builder {
@@ -248,6 +250,11 @@ func (b *builder) addSubagents(context.Context) error {
 		// Its server did not start, which is reported already.
 		b.app.log.Warn("subagent tool not available", "tool", name)
 	}
+	if b.subagentMemory != nil {
+		if err := subTools.Register(b.subagentMemory); err != nil {
+			return err
+		}
+	}
 	types, err := subagent.LoadTypes(b.userPath("agents"), b.projectPath("agents"))
 	if err != nil {
 		return err
@@ -267,21 +274,31 @@ func (b *builder) addSubagents(context.Context) error {
 	if err != nil {
 		return err
 	}
+	if b.app.memory != nil {
+		agentTool.LiveContext = b.app.memory.subagentPrompt
+	}
 	return b.tools.Register(agentTool)
 }
 
 func (b *builder) newAgent(context.Context) error {
+	system, base := b.system, b.system
+	var rebuild func() string
+	if m := b.app.memory; m != nil {
+		system = m.mainPrompt(base)
+		rebuild = func() string { return m.mainPrompt(base) }
+	}
 	b.app.agent = &agent.Agent{
-		Model:       b.opts.Model,
-		ModelID:     b.cfg.Model,
-		System:      b.system,
-		Tools:       b.tools,
-		MaxTokens:   b.cfg.MaxTokens,
-		MaxParallel: b.cfg.Subagent.MaxParallel,
-		Budget:      agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
-		Compaction:  b.compaction,
-		Hooks:       b.app.hooks,
-		Log:         b.app.log,
+		Model:         b.opts.Model,
+		ModelID:       b.cfg.Model,
+		System:        system,
+		RebuildSystem: rebuild,
+		Tools:         b.tools,
+		MaxTokens:     b.cfg.MaxTokens,
+		MaxParallel:   b.cfg.Subagent.MaxParallel,
+		Budget:        agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
+		Compaction:    b.compaction,
+		Hooks:         b.app.hooks,
+		Log:           b.app.log,
 	}
 	return nil
 }

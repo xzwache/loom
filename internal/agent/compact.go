@@ -47,6 +47,9 @@ func (rs *runState) compact(ctx context.Context, res *Result, trigger compact.Tr
 		return false
 	}
 	res.Messages = out
+	if rs.agent.RebuildSystem != nil {
+		res.System = rs.agent.RebuildSystem()
+	}
 	rs.contextSize, rs.sizedAt = reports[len(reports)-1].TokensAfter, len(out)
 	return true
 }

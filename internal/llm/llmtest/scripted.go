@@ -57,7 +57,7 @@ func (s *Scripted) Remaining() int {
 
 func TextReply(text string) Reply {
 	return Reply{Response: llm.Response{
-		Content:    []llm.Block{llm.Text{Text: text}},
+		Content:    []llm.Block{llm.ModelText(text)},
 		StopReason: llm.StopEndTurn,
 	}}
 }

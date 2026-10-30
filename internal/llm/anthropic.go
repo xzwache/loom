@@ -92,7 +92,7 @@ func toMessageParam(m Message) (anthropic.MessageParam, error) {
 	for _, b := range m.Content {
 		switch b := b.(type) {
 		case Text:
-			blocks = append(blocks, anthropic.NewTextBlock(b.Text))
+			blocks = append(blocks, anthropic.NewTextBlock(b.Sent()))
 		case ToolUse:
 			input := b.Input
 			if len(input) == 0 {
@@ -163,7 +163,7 @@ func fromMessage(msg *anthropic.Message) (Response, error) {
 	for _, block := range msg.Content {
 		switch b := block.AsAny().(type) {
 		case anthropic.TextBlock:
-			resp.Content = append(resp.Content, Text{Text: b.Text})
+			resp.Content = append(resp.Content, ModelText(b.Text))
 		case anthropic.ToolUseBlock:
 			resp.Content = append(resp.Content, ToolUse{ID: b.ID, Name: b.Name, Input: b.Input})
 		case anthropic.ThinkingBlock:

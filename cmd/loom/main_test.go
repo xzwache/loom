@@ -28,6 +28,8 @@ func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) 
 		vars = map[string]string{"ANTHROPIC_API_KEY": "sk-secret", "LOOM_MODEL": "test-model"}
 	}
 	vars["HOME"] = t.TempDir()
+	// Memory adds a tool and a model call at the end; memory_test.go covers it.
+	writeFile(t, userConfig(vars["HOME"]), `{"memory": {"enabled": false}}`)
 	te := &testEnv{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, model: llmtest.NewScripted(replies...)}
 	te.env = env{
 		stdout:   te.stdout,
@@ -37,6 +39,10 @@ func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) 
 		newModel: func(config.Config) llm.Model { return te.model },
 	}
 	return te
+}
+
+func userConfig(home string) string {
+	return filepath.Join(home, ".config", "loom", "config.json")
 }
 
 func TestRun(t *testing.T) {
