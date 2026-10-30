@@ -28,21 +28,28 @@ func (h History) clone() History          { return History{messages: slices.Clon
 
 func (h *History) Append(msgs ...llm.Message) { h.messages = append(h.messages, msgs...) }
 
-// AddPrompt appends text as the next user turn. When the history ends with a
-// user message (tool results from a run that stopped early), the text joins
-// it, since the API rejects two user messages in a row.
-func (h *History) AddPrompt(text string) {
-	block := llm.Text{Text: text}
+// AddPrompt appends the user's text as the next user turn, with loom's
+// notes after it. When the history ends with a user message (tool results
+// from a run that stopped early), they join it, since the API rejects two
+// user messages in a row.
+func (h *History) AddPrompt(text string, notes ...llm.Text) {
+	blocks := []llm.Block{llm.UserText(text)}
+	for _, n := range notes {
+		blocks = append(blocks, n)
+	}
 	if n := len(h.messages); n > 0 && h.messages[n-1].Role == llm.RoleUser {
 		last := &h.messages[n-1]
-		last.Content = append(slices.Clone(last.Content), block)
+		last.Content = append(slices.Clone(last.Content), blocks...)
 		return
 	}
-	h.Append(llm.Message{Role: llm.RoleUser, Content: []llm.Block{block}})
+	h.Append(llm.Message{Role: llm.RoleUser, Content: blocks})
 }
 
 func (h History) Validate() error {
 	for i, m := range h.messages {
+		if err := m.Check(); err != nil {
+			return fmt.Errorf("message %d: %w", i, err)
+		}
 		if m.Role != llm.RoleAssistant {
 			continue
 		}

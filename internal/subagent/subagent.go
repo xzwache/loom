@@ -28,6 +28,10 @@ type Tool struct {
 	template agent.Agent
 	types    map[string]prepared
 	spec     llm.ToolSpec
+	// LiveContext, if set, is added to each subagent's prompt when it
+	// starts, for parts that change during a session, such as the memory
+	// list.
+	LiveContext func() string
 }
 
 type prepared struct {
@@ -94,6 +98,13 @@ func typeTools(all *tool.Registry, typ Type, log *slog.Logger) *tool.Registry {
 			log.Warn("agent type lists a tool subagents cannot use", "type", typ.Name, "tool", name, "path", typ.Path)
 		}
 	}
+	// Memory is read-only for subagents and its list is in every subagent's
+	// prompt, so every type can read it.
+	if mem, ok := all.Get(tool.Memory); ok {
+		if _, listed := tools.Get(tool.Memory); !listed {
+			_ = tools.Register(mem)
+		}
+	}
 	return tools
 }
 
@@ -133,16 +144,20 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	a.Budget.MaxTokens = budgetFor(in.MaxTokens, a.Budget.MaxTokens)
 	a.Tools = typ.tools
 	a.System = strings.TrimSpace(typ.Prompt + "\n\n" + a.System)
-	prompt := in.Prompt
+	if t.LiveContext != nil {
+		a.System = strings.TrimSpace(a.System + "\n\n" + t.LiveContext())
+	}
+	// The parent model wrote the task, but for the subagent it is the request.
+	content := []llm.Block{llm.UserText(in.Prompt)}
 	start, err := a.Hooks.Fire(ctx, event.SubagentStart{AgentID: a.Subagent.ID, AgentType: a.Subagent.Type})
 	if err != nil && a.Log != nil {
 		a.Log.Warn("hook failed", "event", "SubagentStart", "error", err)
 	}
 	if start.AdditionalContext != "" {
-		prompt += "\n\n" + start.AdditionalContext
+		content = append(content, llm.SystemText(llm.KindHookContext, start.AdditionalContext))
 	}
 
-	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: prompt}}}})
+	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: content}})
 	if err != nil {
 		return "", fmt.Errorf("subagent %s: %w", a.Subagent.ID, err)
 	}

@@ -97,7 +97,7 @@ func (rs *runState) send(ctx context.Context, res *Result) (llm.Response, error)
 	}
 	resp, err := a.Model.SendMessage(ctx, llm.Request{
 		Model:     a.ModelID,
-		System:    a.System,
+		System:    res.System,
 		Messages:  res.Messages,
 		Tools:     rs.specs,
 		MaxTokens: a.MaxTokens,

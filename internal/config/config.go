@@ -51,6 +51,8 @@ type Config struct {
 	Compaction Compaction `json:"compaction"`
 	// MCP sets how MCP servers start; the servers are listed in .mcp.json.
 	MCP MCP `json:"mcp"`
+	// Memory keeps facts across sessions in the user's folder.
+	Memory Memory `json:"memory"`
 	// ChildEnv hides secrets from bash, hooks and MCP servers. Hide adds up
 	// across files; Pass may be set only in the user config.
 	ChildEnv childenv.Filter `json:"child_env"`
@@ -89,6 +91,18 @@ type Compaction struct {
 	OutputsRetention Duration `json:"outputs_retention"`
 }
 
+// Memory: Enabled gives the model its memory and the memory tool.
+// AutoExtract saves what is worth keeping when a session ends. Once there
+// are ConsolidateAt memories, a session that changed one also cleans them up;
+// 0 turns that off. Model makes these calls and picks memories when the list
+// does not fit the prompt; empty uses the subagent model, then the main one.
+type Memory struct {
+	Enabled       bool   `json:"enabled"`
+	AutoExtract   bool   `json:"auto_extract"`
+	ConsolidateAt int    `json:"consolidate_at"`
+	Model         string `json:"model,omitempty"`
+}
+
 // MCP: a project server in .mcp.json starts only when EnabledProjectServers
 // names it. StartupTimeout bounds connecting to all servers.
 type MCP struct {
@@ -122,6 +136,7 @@ func Default() Config {
 			MinOffloadTokens: 2000,
 			OutputsRetention: Duration(7 * 24 * time.Hour),
 		},
+		Memory:      Memory{Enabled: true, AutoExtract: true, ConsolidateAt: 30},
 		MCP:         MCP{StartupTimeout: Duration(30 * time.Second)},
 		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
@@ -240,6 +255,9 @@ func (c Config) Validate() error {
 		if f.value <= 0 {
 			errs = append(errs, fmt.Errorf("%s must be positive", f.name))
 		}
+	}
+	if c.Memory.ConsolidateAt < 0 {
+		errs = append(errs, fmt.Errorf("memory.consolidate_at must not be negative, got %d", c.Memory.ConsolidateAt))
 	}
 	if c.TodoReminderTurns < 0 {
 		errs = append(errs, fmt.Errorf("todo_reminder_turns must not be negative, got %d", c.TodoReminderTurns))

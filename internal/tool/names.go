@@ -4,19 +4,21 @@ import "strings"
 
 // Names of the built-in tools.
 const (
-	Agent = "agent"
-	Bash  = "bash"
-	Edit  = "edit"
-	Glob  = "glob"
-	Read  = "read"
-	Skill = "skill"
-	Todo  = "todo"
-	Write = "write"
+	Agent  = "agent"
+	Bash   = "bash"
+	Edit   = "edit"
+	Glob   = "glob"
+	Memory = "memory"
+	Read   = "read"
+	Skill  = "skill"
+	Todo   = "todo"
+	Write  = "write"
 )
 
 // MainOnly are the tools only the main agent gets: a subagent cannot start
-// subagents or change the main todo list.
-var MainOnly = []string{Agent, Todo}
+// subagents, change the main todo list or write memory. Subagents get a
+// read-only memory tool of their own.
+var MainOnly = []string{Agent, Memory, Todo}
 
 // MCPPrefix starts every MCP tool name: mcp__<server>__<tool>.
 const MCPPrefix = "mcp__"

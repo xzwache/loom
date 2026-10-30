@@ -36,6 +36,10 @@ type Agent struct {
 	// Compaction shrinks the history when it grows too big for the context
 	// window; nil turns it off.
 	Compaction *compact.Chain
+	// RebuildSystem, if set, makes a new system prompt after a compaction
+	// changed the history, such as one with the current memories. Changing
+	// the prompt loses the cached prefix, which compaction has lost anyway.
+	RebuildSystem func() string
 	// Subagent is set when this agent runs for another one. Its events then
 	// carry the subagent in their context, it fires SubagentStop in place of
 	// Stop, and it skips UserPromptSubmit.
@@ -72,6 +76,9 @@ type Result struct {
 	Usage llm.Usage
 	// Detail explains a halted run.
 	Detail string
+	// System is the system prompt the run ended with: Agent.System, or the
+	// one RebuildSystem made.
+	System string
 }
 
 var errTimeBudget = errors.New("time budget exceeded")
@@ -109,6 +116,13 @@ type runState struct {
 }
 
 func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error) {
+	return a.RunAfter(ctx, messages, llm.Usage{})
+}
+
+// RunAfter is Run with tokens spent for this run before it started, such as
+// a call that prepared the prompt: they are part of its Usage and count
+// toward Budget.MaxTokens.
+func (a *Agent) RunAfter(ctx context.Context, messages []llm.Message, spent llm.Usage) (Result, error) {
 	if a.Model == nil {
 		return Result{}, errors.New("agent has no model")
 	}
@@ -127,6 +141,7 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	parent := meterFrom(ctx)
 	ctx = withMeter(ctx, &rs.subagents)
 	rs.tokens = &tokenLedger{limit: a.Budget.MaxTokens, parent: ledgerFrom(ctx)}
+	rs.tokens.add(spent.Total())
 	ctx = withLedger(ctx, rs.tokens)
 	if a.Budget.MaxDuration > 0 {
 		var cancel context.CancelFunc
@@ -134,7 +149,7 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 		defer cancel()
 	}
 
-	res := Result{Messages: slices.Clone(messages)}
+	res := Result{Messages: slices.Clone(messages), Usage: spent, System: a.System}
 	err := rs.loop(ctx, &res)
 	res.Usage = res.Usage.Add(rs.subagents.take())
 	parent.add(res.Usage)
@@ -230,10 +245,10 @@ func appendUserText(res *Result, s string) {
 	n := len(res.Messages)
 	if n > 0 && res.Messages[n-1].Role == llm.RoleUser {
 		last := &res.Messages[n-1]
-		last.Content = append(slices.Clone(last.Content), llm.Text{Text: s})
+		last.Content = append(slices.Clone(last.Content), llm.SystemText(llm.KindHookContext, s))
 		return
 	}
-	res.Messages = append(res.Messages, llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: s}}})
+	res.Messages = append(res.Messages, llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.SystemText(llm.KindHookContext, s)}})
 }
 
 func stopFromContext(ctx context.Context) (StopReason, bool) {

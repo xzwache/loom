@@ -35,7 +35,7 @@ func TestStores(t *testing.T) {
 			newer := New(now.Add(time.Minute), "/w", "m")
 			newer.Updated = now.Add(time.Hour)
 			newer.History.Append(
-				llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: "second"}}},
+				llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.UserText("second")}},
 				llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{llm.ToolUse{ID: "t1", Name: "bash", Input: []byte(`{}`)}}},
 				llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.ToolResult{ToolUseID: "t1", Content: "ok"}}},
 			)
@@ -89,7 +89,7 @@ func TestFileStorePermissions(t *testing.T) {
 func TestAddPrompt(t *testing.T) {
 	var h History
 	h.AddPrompt("one")
-	h.Append(llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{llm.Text{Text: "ok"}}})
+	h.Append(llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{llm.ModelText("ok")}})
 	h.AddPrompt("two")
 	h.Append(llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.ToolResult{ToolUseID: "t1"}}})
 	h.AddPrompt("three")
@@ -98,7 +98,7 @@ func TestAddPrompt(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("got %d messages, want 4", len(msgs))
 	}
-	want := []llm.Block{llm.ToolResult{ToolUseID: "t1"}, llm.Text{Text: "three"}}
+	want := []llm.Block{llm.ToolResult{ToolUseID: "t1"}, llm.UserText("three")}
 	if diff := cmp.Diff(want, msgs[3].Content); diff != "" {
 		t.Errorf("prompt after tool results mismatch (-want +got):\n%s", diff)
 	}
@@ -106,7 +106,7 @@ func TestAddPrompt(t *testing.T) {
 
 func TestHistoryValidate(t *testing.T) {
 	unanswered := []llm.Message{
-		{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: "go"}}},
+		{Role: llm.RoleUser, Content: []llm.Block{llm.UserText("go")}},
 		{Role: llm.RoleAssistant, Content: []llm.Block{llm.ToolUse{ID: "t1", Name: "bash"}}},
 	}
 	if _, err := NewHistory(unanswered); err == nil {

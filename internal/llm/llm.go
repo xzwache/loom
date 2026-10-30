@@ -43,8 +43,12 @@ type Message struct {
 // handle them with a type switch.
 type Block interface{ isBlock() }
 
+// Text is made with UserText, ModelText or SystemText, so it always says
+// who wrote it (see Origin).
 type Text struct {
-	Text string
+	Text   string
+	Origin Origin
+	Kind   Kind
 }
 
 type ToolUse struct {

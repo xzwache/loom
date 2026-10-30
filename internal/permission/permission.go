@@ -54,9 +54,10 @@ func New(s Settings, dir, home string) (*Policy, error) {
 		tool.Glob:  plainGuard{policy: p, tool: tool.Glob, access: ReadOnly},
 		// These change only loom's own state. A subagent's own tool calls
 		// are checked like any other.
-		tool.Agent: plainGuard{policy: p, tool: tool.Agent, access: ReadOnly},
-		tool.Skill: plainGuard{policy: p, tool: tool.Skill, access: ReadOnly},
-		tool.Todo:  plainGuard{policy: p, tool: tool.Todo, access: ReadOnly},
+		tool.Agent:  plainGuard{policy: p, tool: tool.Agent, access: ReadOnly},
+		tool.Memory: plainGuard{policy: p, tool: tool.Memory, access: ReadOnly},
+		tool.Skill:  plainGuard{policy: p, tool: tool.Skill, access: ReadOnly},
+		tool.Todo:   plainGuard{policy: p, tool: tool.Todo, access: ReadOnly},
 	}
 	return p, nil
 }

@@ -124,3 +124,22 @@ func TestRunCountsNewToolOutputInTheContextSize(t *testing.T) {
 		t.Errorf("second request has %d messages; the tool output should have triggered compaction", len(msgs))
 	}
 }
+
+func TestRunRebuildsSystemAfterCompaction(t *testing.T) {
+	model := llmtest.NewScripted(
+		sized(reply(llm.StopToolUse, use("t1", "echo")), 1200),
+		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
+	)
+	a := compacting(t, model, summarized{})
+	a.System = "old list"
+	a.RebuildSystem = func() string { return "new list" }
+
+	res, err := a.Run(context.Background(), prompt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqs := model.Requests()
+	if reqs[0].System != "old list" || reqs[1].System != "new list" || res.System != "new list" {
+		t.Errorf("systems = %q, %q, result %q; want the rebuilt one after compaction", reqs[0].System, reqs[1].System, res.System)
+	}
+}

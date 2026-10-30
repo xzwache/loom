@@ -9,6 +9,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/xzwache/loom/internal/agent"
 	"github.com/xzwache/loom/internal/config"
@@ -39,6 +40,9 @@ type App struct {
 	store   session.Store
 	log     *slog.Logger
 	closers []func()
+	memory  *appMemory
+	// lastStop is how the last run ended.
+	lastStop agent.StopReason
 }
 
 // Build puts an App together. Close releases it.
@@ -55,6 +59,7 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 		b.addHooks,
 		b.addSkills,
 		b.loadPrompts,
+		b.addMemory,
 		b.startSession,
 		b.addMCP,
 		b.newCompaction,
@@ -75,17 +80,33 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 // Run gives the agent one prompt in the session and saves the session after,
 // even when the run fails or stops early.
 func (a *App) Run(ctx context.Context, prompt string) (agent.Result, error) {
-	a.Session.History.AddPrompt(prompt)
-	res, err := a.agent.Run(ctx, a.Session.History.Messages())
+	notes, spent := a.memoryHint(ctx, prompt)
+	a.Session.History.AddPrompt(prompt, notes...)
+	res, err := a.agent.RunAfter(ctx, a.Session.History.Messages(), spent)
+	a.lastStop = res.Stop
+	// A compaction may have rebuilt the prompt; the next run goes on with it.
+	if res.System != "" {
+		a.agent.System = res.System
+	}
 	if err := saveSession(context.WithoutCancel(ctx), a.store, &a.Session, res); err != nil {
 		a.log.Warn("session not saved", "error", err)
 	}
 	return res, err
 }
 
-// End reports that the session is over.
-func (a *App) End(ctx context.Context, reason string) {
+// End saves memories from the session and cleans them up, as configured,
+// then reports that the session is over. It returns the tokens that took;
+// they are added to the session's usage.
+func (a *App) End(ctx context.Context, reason string) llm.Usage {
+	used := a.endMemory(ctx)
+	if used.Total() > 0 {
+		a.Session.Usage, a.Session.Updated = a.Session.Usage.Add(used), time.Now()
+		if err := a.store.Save(ctx, a.Session); err != nil {
+			a.log.Warn("session not saved", "error", err)
+		}
+	}
 	a.hooks.Notify(ctx, event.SessionEnd{Reason: reason})
+	return used
 }
 
 // Close releases what Build opened, in reverse order.

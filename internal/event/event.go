@@ -167,8 +167,13 @@ type MemoryRead struct {
 	Path string `json:"path"`
 }
 
+// MemoryWrite fires when a memory is saved or removed. Action is create,
+// update or delete; By is the model (the memory tool), or extraction or
+// consolidation at the end of a session.
 type MemoryWrite struct {
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Action string `json:"action"`
+	By     string `json:"by"`
 }
 
 // Subagents and tasks
