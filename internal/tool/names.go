@@ -11,6 +11,7 @@ const (
 	Memory = "memory"
 	Read   = "read"
 	Skill  = "skill"
+	Task   = "task"
 	Todo   = "todo"
 	Write  = "write"
 )

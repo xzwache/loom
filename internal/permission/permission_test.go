@@ -106,6 +106,7 @@ func TestCheck(t *testing.T) {
 		{name: "acceptEdits allows edits", mode: ModeAcceptEdits, tool: "edit", input: file("main.go"), want: hook.Allow},
 		{name: "acceptEdits keeps commands", mode: ModeAcceptEdits, tool: "bash", input: bash("make"), want: hook.Ask},
 		{name: "plan denies edits", mode: ModePlan, tool: "edit", input: file("docs/x.md"), want: hook.Deny},
+		{name: "plan allows tasks", mode: ModePlan, tool: "task", input: json.RawMessage(`{"action":"create","subject":"x"}`), want: hook.Allow},
 		{name: "plan allows reads", mode: ModePlan, tool: "bash", input: bash("git log"), want: hook.Allow},
 		{name: "bypass allows", mode: ModeBypass, tool: "bash", input: bash("make install"), want: hook.Allow},
 		{name: "bypass keeps deny rules", mode: ModeBypass, tool: "bash", input: bash("git push"), want: hook.Deny},

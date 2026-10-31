@@ -112,7 +112,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Errorf("out.txt = %q, %v; want the bash tool to have run in the workdir", data, err)
 	}
 	req := te.model.Requests()[0]
-	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 7 {
+	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 8 {
 		t.Errorf("first request = model %q, system %q, %d tools", req.Model, req.System, len(req.Tools))
 	}
 }

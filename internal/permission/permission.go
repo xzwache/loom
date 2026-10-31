@@ -57,6 +57,7 @@ func New(s Settings, dir, home string) (*Policy, error) {
 		tool.Agent:  plainGuard{policy: p, tool: tool.Agent, access: ReadOnly},
 		tool.Memory: plainGuard{policy: p, tool: tool.Memory, access: ReadOnly},
 		tool.Skill:  plainGuard{policy: p, tool: tool.Skill, access: ReadOnly},
+		tool.Task:   plainGuard{policy: p, tool: tool.Task, access: ReadOnly},
 		tool.Todo:   plainGuard{policy: p, tool: tool.Todo, access: ReadOnly},
 	}
 	return p, nil

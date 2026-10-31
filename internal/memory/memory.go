@@ -139,8 +139,9 @@ func parse(scope Scope, name string, data []byte) (Memory, error) {
 	return m, m.Validate()
 }
 
-// ProjectKey names a workspace's memory folder: its folder name, readable,
-// and a hash of its full path, so two folders named alike stay apart.
+// ProjectKey names a workspace's folders in loom's own storage (memory,
+// tasks): its folder name, readable, and a hash of its full path, so two
+// folders named alike stay apart.
 func ProjectKey(workdir string) string {
 	abs, err := filepath.Abs(workdir)
 	if err != nil {
