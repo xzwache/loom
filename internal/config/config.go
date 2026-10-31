@@ -20,6 +20,7 @@ import (
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
+	"github.com/xzwache/loom/internal/task"
 	"github.com/xzwache/loom/internal/tool"
 )
 
@@ -53,6 +54,8 @@ type Config struct {
 	MCP MCP `json:"mcp"`
 	// Memory keeps facts across sessions in the user's folder.
 	Memory Memory `json:"memory"`
+	// Tasks configures the task graph.
+	Tasks Tasks `json:"tasks"`
 	// ChildEnv hides secrets from bash, hooks and MCP servers. Hide adds up
 	// across files; Pass may be set only in the user config.
 	ChildEnv childenv.Filter `json:"child_env"`
@@ -103,6 +106,14 @@ type Memory struct {
 	Model         string `json:"model,omitempty"`
 }
 
+// Tasks: List names a task list that sessions of this workspace share; empty
+// gives each session a list of its own. Session lists unused for Retention
+// are deleted; named lists are kept.
+type Tasks struct {
+	List      string   `json:"list,omitempty"`
+	Retention Duration `json:"retention"`
+}
+
 // MCP: a project server in .mcp.json starts only when EnabledProjectServers
 // names it. StartupTimeout bounds connecting to all servers.
 type MCP struct {
@@ -126,7 +137,7 @@ func Default() Config {
 			MaxParallel:  4,
 			MaxTurns:     30,
 			MaxRunTokens: 500_000,
-			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob},
+			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob, tool.Task},
 		},
 		Compaction: Compaction{
 			ContextWindow:    200_000,
@@ -137,6 +148,7 @@ func Default() Config {
 			OutputsRetention: Duration(7 * 24 * time.Hour),
 		},
 		Memory:      Memory{Enabled: true, AutoExtract: true, ConsolidateAt: 30},
+		Tasks:       Tasks{Retention: Duration(30 * 24 * time.Hour)},
 		MCP:         MCP{StartupTimeout: Duration(30 * time.Second)},
 		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
@@ -250,6 +262,7 @@ func (c Config) Validate() error {
 		{"compaction.context_window", int64(c.Compaction.ContextWindow)},
 		{"compaction.outputs_retention", int64(c.Compaction.OutputsRetention)},
 		{"mcp.startup_timeout", int64(c.MCP.StartupTimeout)},
+		{"tasks.retention", int64(c.Tasks.Retention)},
 	}
 	for _, f := range positive {
 		if f.value <= 0 {
@@ -277,6 +290,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.MCP.validate(); err != nil {
 		errs = append(errs, err)
+	}
+	if err := task.ValidateListName(c.Tasks.List); c.Tasks.List != "" && err != nil {
+		errs = append(errs, fmt.Errorf("tasks.list: %w", err))
 	}
 	if err := c.ChildEnv.Validate(); err != nil {
 		errs = append(errs, err)

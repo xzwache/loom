@@ -60,6 +60,7 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 		b.addSkills,
 		b.loadPrompts,
 		b.addMemory,
+		b.addTasks,
 		b.startSession,
 		b.addMCP,
 		b.newCompaction,

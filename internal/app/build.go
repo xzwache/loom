@@ -17,11 +17,13 @@ import (
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/hook/command"
+	"github.com/xzwache/loom/internal/memory"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
 	"github.com/xzwache/loom/internal/session"
 	"github.com/xzwache/loom/internal/skill"
 	"github.com/xzwache/loom/internal/subagent"
+	"github.com/xzwache/loom/internal/task"
 	"github.com/xzwache/loom/internal/todo"
 	"github.com/xzwache/loom/internal/tool"
 	"github.com/xzwache/loom/internal/tool/bash"
@@ -50,6 +52,9 @@ type builder struct {
 	subagentContext string
 	// subagentMemory is the read-only memory tool; nil when memory is off.
 	subagentMemory tool.Tool
+	// tasks is the session's task list, taskList its name.
+	tasks    *task.Store
+	taskList string
 }
 
 func newBuilder(cfg config.Config, opts Options) *builder {
@@ -192,6 +197,34 @@ func (b *builder) loadPrompts(ctx context.Context) error {
 	return nil
 }
 
+// addTasks registers the task tool on this session's task list: the named
+// list from tasks.list, or one of its own. Lists live in loom's state
+// folder, not the repository, so a repository cannot plant tasks. Session
+// lists unused for tasks.retention are deleted here.
+func (b *builder) addTasks(context.Context) error {
+	root := filepath.Join(b.opts.Dirs.State, "tasks", memory.ProjectKey(b.ws.Dir()))
+	b.taskList = cmp.Or(b.cfg.Tasks.List, task.SessionList(b.app.Session.ID))
+	deleted, err := task.PruneSessionLists(root, b.cfg.Tasks.Retention.Std(), time.Now(), b.taskList)
+	if err != nil {
+		b.app.log.Warn("old task lists not deleted", "error", err)
+	}
+	if len(deleted) > 0 {
+		b.app.log.Info("old task lists deleted", "lists", deleted)
+	}
+	b.tasks = task.NewStore(filepath.Join(root, b.taskList))
+	b.app.log.Info("tasks", "list", b.taskList, "path", b.tasks.Dir())
+	return b.tools.Register(&task.Tool{Store: b.tasks, Notify: b.app.hooks.Notify})
+}
+
+// tasksSummary is the line about open tasks for the main prompt, or "".
+func (b *builder) tasksSummary() string {
+	tasks, problems := b.tasks.List()
+	for _, p := range problems {
+		b.app.log.Warn("task not readable", "error", p)
+	}
+	return task.Summary(b.taskList, tasks)
+}
+
 // startSession fires SessionStart; context its hooks return goes into the
 // main prompt.
 func (b *builder) startSession(ctx context.Context) error {
@@ -280,18 +313,26 @@ func (b *builder) addSubagents(context.Context) error {
 	return b.tools.Register(agentTool)
 }
 
+// newAgent builds the main agent. Its prompt ends with the parts that change
+// during a session, the task summary and the memory list; they are rebuilt
+// after each compaction, when the cached prompt is lost anyway.
 func (b *builder) newAgent(context.Context) error {
-	system, base := b.system, b.system
-	var rebuild func() string
-	if m := b.app.memory; m != nil {
-		system = m.mainPrompt(base)
-		rebuild = func() string { return m.mainPrompt(base) }
+	base := b.system
+	system := func() string {
+		s := base
+		if summary := b.tasksSummary(); summary != "" {
+			s += "\n\n" + summary
+		}
+		if m := b.app.memory; m != nil {
+			s = m.mainPrompt(s)
+		}
+		return s
 	}
 	b.app.agent = &agent.Agent{
 		Model:         b.opts.Model,
 		ModelID:       b.cfg.Model,
-		System:        system,
-		RebuildSystem: rebuild,
+		System:        system(),
+		RebuildSystem: system,
 		Tools:         b.tools,
 		MaxTokens:     b.cfg.MaxTokens,
 		MaxParallel:   b.cfg.Subagent.MaxParallel,

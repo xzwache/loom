@@ -197,8 +197,12 @@ type TaskCreated struct {
 	Subject string `json:"subject"`
 }
 
+// TaskCompleted fires when a task is completed; Owner is the agent that had
+// claimed it.
 type TaskCompleted struct {
-	TaskID string `json:"task_id"`
+	TaskID  string `json:"task_id"`
+	Subject string `json:"subject"`
+	Owner   string `json:"owner"`
 }
 
 // Compaction

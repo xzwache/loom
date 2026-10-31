@@ -76,6 +76,7 @@ func run(ctx context.Context, args []string, e env) int {
 	resume := fs.String("resume", "", "with -p, continue the session with this id")
 	latest := fs.Bool("continue", false, "with -p, continue the most recent session")
 	permissionMode := fs.String("permission-mode", "", "default, acceptEdits, plan or bypassPermissions; overrides the config")
+	taskList := fs.String("tasks", "", "use this named task list, shared by sessions of the workspace; overrides the config")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -101,8 +102,13 @@ func run(ctx context.Context, args []string, e env) int {
 	}
 
 	cfg, err := config.Load(paths, e.getenv)
-	if err == nil && *permissionMode != "" {
-		cfg.Permissions.Mode = permission.Mode(*permissionMode)
+	if err == nil && (*permissionMode != "" || *taskList != "") {
+		if *permissionMode != "" {
+			cfg.Permissions.Mode = permission.Mode(*permissionMode)
+		}
+		if *taskList != "" {
+			cfg.Tasks.List = *taskList
+		}
 		err = cfg.Validate()
 	}
 	if err != nil {
