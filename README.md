@@ -31,7 +31,7 @@ Most agent repos stop at "it runs". loom aims for a harness you can **reason abo
   type with a fresh history.
 - 🤝 **Compatible with what you already have.** Claude Code hook scripts, `SKILL.md` folders,
   `AGENTS.md` / `CLAUDE.md`, and `.mcp.json` work unchanged.
-- 🧪 **Testable without tokens.** A scripted fake model drives the loop in unit tests.
+- 🧪 **Testable without tokens.** A fake model replaying given replies drives the loop in unit tests.
 
 The core follows the learn-claude-code sessions
 s01–s10. The features planned on top are in [`references/loom-features.md`](references/loom-features.md).
@@ -99,7 +99,7 @@ Interactive mode (a TUI) is planned; today loom runs **headless**: one task in, 
 | 🧠 | **Memory** | Facts across sessions, saved by the model or extracted at session end, consolidated over time. [docs](docs/memory.md) |
 | 🏷️ | **Text origins** | Every text block says who wrote it: user, model or loom. [docs](docs/messages.md) |
 | 🤖 | **Headless mode** | `-p` with optional JSON output and meaningful exit codes |
-| 🧪 | **Fake model** | `llmtest.Scripted` runs the loop in tests with no API calls |
+| 🧪 | **Fake model** | `llmtest.Replay` runs the loop in tests with no API calls |
 
 ---
 
@@ -138,7 +138,7 @@ cmd/loom              flags, config, run() -> exit code
 internal/app          builds workspace, tools, hooks, agent and session from config
 internal/agent        the loop: budgets, dispatch, compaction trigger, usage
 internal/llm          message types, Model interface, Anthropic implementation
-internal/llm/llmtest  scripted fake model for hermetic tests
+internal/llm/llmtest  fake model that replays given replies, for hermetic tests
 internal/tool         Tool interface, Registry, built-ins (bash, read, write, edit, glob)
 internal/event        typed, versioned lifecycle events
 internal/hook         pipeline over events; command/ runs Claude Code-style scripts
@@ -294,7 +294,7 @@ Collected in [`references/loom-features.md`](references/loom-features.md). Nothi
 |---|---|---|
 | Hard budgets | Limits on turns, tokens, cost and time, with a clean stop and a reason | Easy to forget |
 | Full run trace | Every request, response and tool call as JSONL | Traces can capture secrets from tool output |
-| Fake model | Scripted stand-in for the API | Scripts drift from real model behavior |
+| Fake model | Stand-in that replays given replies | Canned replies drift from real model behavior |
 | Sandboxed execution | Commands run in a container, with permission rules | Docker adds setup friction |
 | Usage report | Tokens, cache hits and cost at the end of a run | Prices change; keep them in config |
 | ★ Deterministic replay | Re-run a recorded trace against changed harness code, no model calls | Works only while the change does not alter what the model saw |

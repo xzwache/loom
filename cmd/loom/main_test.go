@@ -19,7 +19,7 @@ type testEnv struct {
 	env
 	stdout *bytes.Buffer
 	stderr *bytes.Buffer
-	model  *llmtest.Scripted
+	model  *llmtest.Replay
 }
 
 func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) *testEnv {
@@ -30,7 +30,7 @@ func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) 
 	vars["HOME"] = t.TempDir()
 	// Memory adds a tool and a model call at the end; memory_test.go covers it.
 	writeFile(t, userConfig(vars["HOME"]), `{"memory": {"enabled": false}}`)
-	te := &testEnv{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, model: llmtest.NewScripted(replies...)}
+	te := &testEnv{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, model: llmtest.NewReplay(replies...)}
 	te.env = env{
 		stdout:   te.stdout,
 		stderr:   te.stderr,

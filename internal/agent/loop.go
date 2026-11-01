@@ -95,13 +95,14 @@ func (rs *runState) send(ctx context.Context, res *Result) (llm.Response, error)
 	if n := len(res.Messages); n > 0 && res.Messages[n-1].Role == llm.RoleUser {
 		appendUserText(res, req.AdditionalContext)
 	}
-	resp, err := a.Model.SendMessage(ctx, llm.Request{
+	// The events are not shown yet; display events will fire from them.
+	resp, err := llm.Collect(a.Model.Stream(ctx, llm.Request{
 		Model:     a.ModelID,
 		System:    res.System,
 		Messages:  res.Messages,
 		Tools:     rs.specs,
 		MaxTokens: a.MaxTokens,
-	})
+	}), nil) // TODO: provide callback for "onEvent"
 	if err != nil {
 		if stop, ok := stopFromContext(ctx); ok {
 			res.Stop = stop

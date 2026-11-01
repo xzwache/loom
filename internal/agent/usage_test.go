@@ -12,14 +12,14 @@ import (
 // subTool runs a child agent, as the agent tool does.
 func subTool(t *testing.T) funcTool {
 	return funcTool{name: "sub", run: func(ctx context.Context, _ json.RawMessage) (string, error) {
-		child := newAgent(t, llmtest.NewScripted(reply(llm.StopEndTurn, llm.Text{Text: "report"})))
+		child := newAgent(t, llmtest.NewReplay(reply(llm.StopEndTurn, llm.Text{Text: "report"})))
 		res, err := child.Run(ctx, prompt())
 		return res.Text, err
 	}}
 }
 
 func TestRunCountsSubagentUsage(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopToolUse, use("t1", "sub")),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -33,7 +33,7 @@ func TestRunCountsSubagentUsage(t *testing.T) {
 }
 
 func TestRunSubagentUsageCountsInBudget(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopToolUse, use("t1", "sub")),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -49,7 +49,7 @@ func TestRunSubagentUsageCountsInBudget(t *testing.T) {
 }
 
 func TestRunAfterCountsSpentTokens(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopToolUse, use("n", "echo")), reply(llm.StopEndTurn, llm.Text{Text: "unreached"}))
+	model := llmtest.NewReplay(reply(llm.StopToolUse, use("n", "echo")), reply(llm.StopEndTurn, llm.Text{Text: "unreached"}))
 	a := newAgent(t, model, echoTool())
 	a.Budget.MaxTokens = 20
 	// 15 spent before the run, then the first turn's 11 go over 20.

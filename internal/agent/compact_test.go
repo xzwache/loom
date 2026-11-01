@@ -41,7 +41,7 @@ func compacting(t *testing.T, model llm.Model, s compact.Strategy) *Agent {
 }
 
 func TestRunCompactsBeforeTheContextIsFull(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		sized(reply(llm.StopToolUse, use("t1", "echo")), 1200),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -72,7 +72,7 @@ func TestRunCompactsBeforeTheContextIsFull(t *testing.T) {
 }
 
 func TestRunCompactsWhenTheContextIsFull(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopContextWindowExceeded, llm.Text{Text: "partial"}),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -84,7 +84,7 @@ func TestRunCompactsWhenTheContextIsFull(t *testing.T) {
 }
 
 func TestRunStopsWhenTheContextIsFullTwice(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopContextWindowExceeded),
 		reply(llm.StopContextWindowExceeded),
 	)
@@ -95,7 +95,7 @@ func TestRunStopsWhenTheContextIsFullTwice(t *testing.T) {
 }
 
 func TestRunPreCompactCanHalt(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopContextWindowExceeded))
+	model := llmtest.NewReplay(reply(llm.StopContextWindowExceeded))
 	a := compacting(t, model, summarized{})
 	hook.On(a.Hooks, func(context.Context, event.PreCompact) (hook.Outcome, error) {
 		return hook.Outcome{Halt: true, Reason: "no compaction here"}, nil
@@ -110,7 +110,7 @@ func TestRunCountsNewToolOutputInTheContextSize(t *testing.T) {
 	big := funcTool{name: "big", run: func(context.Context, json.RawMessage) (string, error) {
 		return strings.Repeat("x", 4000), nil // about 1000 tokens
 	}}
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		sized(reply(llm.StopToolUse, use("t1", "big")), 500),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -126,7 +126,7 @@ func TestRunCountsNewToolOutputInTheContextSize(t *testing.T) {
 }
 
 func TestRunRebuildsSystemAfterCompaction(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		sized(reply(llm.StopToolUse, use("t1", "echo")), 1200),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)

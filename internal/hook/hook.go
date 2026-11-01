@@ -86,7 +86,7 @@ func (p *Pipeline) Fire(ctx context.Context, e event.Event) (Outcome, error) {
 			continue
 		}
 		outcome = p.accepted(e.Name(), outcome)
-		out = merge(out, outcome)
+		out = merge(out, outcome) // TODO: consider rework
 		e = apply(e, outcome)
 		if out.Decision == Deny || out.Halt {
 			break

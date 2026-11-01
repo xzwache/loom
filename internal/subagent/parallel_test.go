@@ -3,6 +3,7 @@ package subagent
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/xzwache/loom/internal/agent"
 	"github.com/xzwache/loom/internal/hook"
 	"github.com/xzwache/loom/internal/llm"
+	"github.com/xzwache/loom/internal/llm/llmtest"
 	"github.com/xzwache/loom/internal/tool"
 )
 
@@ -25,7 +27,17 @@ type echoModel struct {
 	peak        int
 }
 
-func (m *echoModel) SendMessage(_ context.Context, req llm.Request) (llm.Response, error) {
+func (m *echoModel) Stream(_ context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) {
+		for _, ev := range llmtest.Events(m.reply(req)) {
+			if !yield(ev, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (m *echoModel) reply(req llm.Request) llm.Response {
 	usage := llm.Usage{InputTokens: 10, OutputTokens: 5}
 	if strings.HasPrefix(req.System, "You are a loom subagent") {
 		m.mu.Lock()
@@ -37,15 +49,15 @@ func (m *echoModel) SendMessage(_ context.Context, req llm.Request) (llm.Respons
 		m.running--
 		m.mu.Unlock()
 		prompt := req.Messages[0].Content[0].(llm.Text).Text
-		return llm.Response{Content: []llm.Block{llm.Text{Text: "report on " + prompt}}, StopReason: llm.StopEndTurn, Usage: usage}, nil
+		return llm.Response{Content: []llm.Block{llm.Text{Text: "report on " + prompt}}, StopReason: llm.StopEndTurn, Usage: usage}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.parentTurns++
 	if m.parentTurns == 1 {
-		return llm.Response{Content: []llm.Block{agentCall("t1", "auth"), agentCall("t2", "billing")}, StopReason: llm.StopToolUse, Usage: usage}, nil
+		return llm.Response{Content: []llm.Block{agentCall("t1", "auth"), agentCall("t2", "billing")}, StopReason: llm.StopToolUse, Usage: usage}
 	}
-	return llm.Response{Content: []llm.Block{llm.Text{Text: "done"}}, StopReason: llm.StopEndTurn, Usage: usage}, nil
+	return llm.Response{Content: []llm.Block{llm.Text{Text: "done"}}, StopReason: llm.StopEndTurn, Usage: usage}
 }
 
 func agentCall(id, prompt string) llm.ToolUse {

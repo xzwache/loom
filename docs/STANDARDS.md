@@ -197,7 +197,7 @@ These rules come from the problem domain. Code that breaks them is a bug, even i
 
 - Every package has tests. New behavior ships with tests in the same change.
 - **Unit tests are hermetic**: no network, no API key, no real `$HOME`. Use `t.TempDir()`, `t.Setenv()`,
-  and the scripted fake provider (`llmtest` package) for loop tests.
+  and the replay fake model (`llmtest.Replay`) for loop tests.
 - **Integration tests** call the real Anthropic API, live behind the `integration` build tag, need
   `ANTHROPIC_API_KEY`, use the cheapest suitable model with tight budgets, and are run explicitly
   (`make test-integration`), not on every CI push.

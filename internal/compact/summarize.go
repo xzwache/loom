@@ -43,7 +43,7 @@ func (s Summarize) Compact(ctx context.Context, in Input) (Result, error) {
 	if in.Instructions != "" {
 		ask += "\n\nWhen summarizing, also follow these instructions:\n" + in.Instructions
 	}
-	resp, err := s.Model.SendMessage(ctx, llm.Request{
+	resp, err := llm.Send(ctx, s.Model, llm.Request{
 		Model:     s.ModelID,
 		System:    summaryPrompt,
 		Messages:  []llm.Message{userText(ask)},

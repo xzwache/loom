@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -39,25 +40,127 @@ func NewAnthropic(opts AnthropicOptions) *Anthropic {
 	return &Anthropic{client: anthropic.NewClient(reqOpts...)}
 }
 
-func (a *Anthropic) SendMessage(ctx context.Context, req Request) (Response, error) {
-	params, err := toParams(req)
-	if err != nil {
-		return Response{}, err
-	}
-	msg, err := a.client.Messages.New(ctx, params)
-	if err != nil {
-		var apiErr *anthropic.Error
-		if errors.As(err, &apiErr) {
-			return Response{}, &APIError{
-				StatusCode: apiErr.StatusCode,
-				Type:       string(apiErr.Type()),
-				RequestID:  apiErr.RequestID,
-				Message:    apiErr.Error(),
+func (a *Anthropic) Stream(ctx context.Context, req Request) iter.Seq2[StreamEvent, error] {
+	return func(yield func(StreamEvent, error) bool) {
+		params, err := toParams(req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		stream := a.client.Messages.NewStreaming(ctx, params)
+		defer stream.Close()
+
+		var translator streamTranslator
+		for stream.Next() {
+			ev, ok, err := translator.translate(stream.Current())
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if ok && !yield(ev, nil) {
+				return
 			}
 		}
-		return Response{}, fmt.Errorf("send message: %w", err)
+		if err := stream.Err(); err != nil {
+			yield(nil, apiError(err))
+		}
 	}
-	return fromMessage(msg)
+}
+
+// apiError turns the SDK's error for a non-2xx response into an APIError.
+// The SDK retries only before a stream starts; an error mid-stream is final.
+func apiError(err error) error {
+	var apiErr *anthropic.Error
+	if errors.As(err, &apiErr) {
+		return &APIError{
+			StatusCode: apiErr.StatusCode,
+			Type:       string(apiErr.Type()),
+			RequestID:  apiErr.RequestID,
+			Message:    apiErr.Error(),
+		}
+	}
+	return fmt.Errorf("stream message: %w", err)
+}
+
+// streamTranslator turns Anthropic's server events into StreamEvents. Usage
+// comes in two parts: input tokens in message_start, the final counts in
+// message_delta; MessageStop carries both.
+type streamTranslator struct {
+	usage Usage
+	stop  StopReason
+}
+
+// translate reports false for events with no StreamEvent of their own.
+func (t *streamTranslator) translate(ev anthropic.MessageStreamEventUnion) (StreamEvent, bool, error) {
+	switch e := ev.AsAny().(type) {
+	case anthropic.MessageStartEvent:
+		u := e.Message.Usage
+		t.usage = Usage{
+			InputTokens:      int(u.InputTokens),
+			OutputTokens:     int(u.OutputTokens),
+			CacheReadTokens:  int(u.CacheReadInputTokens),
+			CacheWriteTokens: int(u.CacheCreationInputTokens),
+		}
+		return nil, false, nil
+	case anthropic.ContentBlockStartEvent:
+		block, err := startBlock(e)
+		return BlockStart{Index: int(e.Index), Block: block}, err == nil, err
+	case anthropic.ContentBlockDeltaEvent:
+		delta, err := blockDelta(e)
+		return delta, err == nil, err
+	case anthropic.ContentBlockStopEvent:
+		return BlockStop{Index: int(e.Index)}, true, nil
+	case anthropic.MessageDeltaEvent:
+		t.stop = StopReason(e.Delta.StopReason)
+		// The counts here are cumulative; input ones may be absent.
+		u := e.Usage
+		t.usage.OutputTokens = int(u.OutputTokens)
+		if u.InputTokens > 0 {
+			t.usage.InputTokens = int(u.InputTokens)
+		}
+		if u.CacheReadInputTokens > 0 {
+			t.usage.CacheReadTokens = int(u.CacheReadInputTokens)
+		}
+		if u.CacheCreationInputTokens > 0 {
+			t.usage.CacheWriteTokens = int(u.CacheCreationInputTokens)
+		}
+		return nil, false, nil
+	case anthropic.MessageStopEvent:
+		return MessageStop{StopReason: t.stop, Usage: t.usage}, true, nil
+	default:
+		return nil, false, fmt.Errorf("%w: stream event %q", ErrUnexpectedResponse, ev.Type)
+	}
+}
+
+func startBlock(e anthropic.ContentBlockStartEvent) (Block, error) {
+	switch b := e.ContentBlock.AsAny().(type) {
+	case anthropic.TextBlock:
+		return Text{}, nil
+	case anthropic.ThinkingBlock:
+		return Thinking{}, nil
+	case anthropic.RedactedThinkingBlock:
+		return RedactedThinking{Data: b.Data}, nil
+	case anthropic.ToolUseBlock:
+		return ToolUse{ID: b.ID, Name: b.Name}, nil
+	default:
+		return nil, fmt.Errorf("%w: content block %q", ErrUnexpectedResponse, e.ContentBlock.Type)
+	}
+}
+
+func blockDelta(e anthropic.ContentBlockDeltaEvent) (StreamEvent, error) {
+	i := int(e.Index)
+	switch d := e.Delta.AsAny().(type) {
+	case anthropic.TextDelta:
+		return TextDelta{Index: i, Text: d.Text}, nil
+	case anthropic.ThinkingDelta:
+		return ThinkingDelta{Index: i, Thinking: d.Thinking}, nil
+	case anthropic.SignatureDelta:
+		return SignatureDelta{Index: i, Signature: d.Signature}, nil
+	case anthropic.InputJSONDelta:
+		return ToolInputDelta{Index: i, JSON: d.PartialJSON}, nil
+	default:
+		return nil, fmt.Errorf("%w: content delta %q", ErrUnexpectedResponse, e.Delta.Type)
+	}
 }
 
 func toParams(req Request) (anthropic.MessageNewParams, error) {
@@ -143,36 +246,4 @@ func toToolParam(t ToolSpec) (anthropic.ToolParam, error) {
 		Description: anthropic.String(t.Description),
 		InputSchema: in,
 	}, nil
-}
-
-func fromMessage(msg *anthropic.Message) (Response, error) {
-	resp := Response{
-		StopReason: StopReason(msg.StopReason),
-		Usage: Usage{
-			InputTokens:      int(msg.Usage.InputTokens),
-			OutputTokens:     int(msg.Usage.OutputTokens),
-			CacheReadTokens:  int(msg.Usage.CacheReadInputTokens),
-			CacheWriteTokens: int(msg.Usage.CacheCreationInputTokens),
-		},
-	}
-	switch resp.StopReason {
-	case StopEndTurn, StopToolUse, StopMaxTokens, StopSequence, StopPauseTurn, StopRefusal, StopContextWindowExceeded:
-	default:
-		return Response{}, fmt.Errorf("%w: stop reason %q", ErrUnexpectedResponse, msg.StopReason)
-	}
-	for _, block := range msg.Content {
-		switch b := block.AsAny().(type) {
-		case anthropic.TextBlock:
-			resp.Content = append(resp.Content, ModelText(b.Text))
-		case anthropic.ToolUseBlock:
-			resp.Content = append(resp.Content, ToolUse{ID: b.ID, Name: b.Name, Input: b.Input})
-		case anthropic.ThinkingBlock:
-			resp.Content = append(resp.Content, Thinking{Thinking: b.Thinking, Signature: b.Signature})
-		case anthropic.RedactedThinkingBlock:
-			resp.Content = append(resp.Content, RedactedThinking{Data: b.Data})
-		default:
-			return Response{}, fmt.Errorf("%w: content block %q", ErrUnexpectedResponse, block.Type)
-		}
-	}
-	return resp, nil
 }

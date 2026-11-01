@@ -20,7 +20,7 @@ func (noopTool) Spec() llm.ToolSpec {
 func (noopTool) Run(context.Context, json.RawMessage) (string, error) { return "ok", nil }
 
 // busyModel asks for a tool call forever, 15 tokens per turn.
-func busyModel(turns int) *llmtest.Scripted {
+func busyModel(turns int) *llmtest.Replay {
 	replies := make([]llmtest.Reply, turns)
 	for i := range replies {
 		replies[i] = llmtest.Reply{Response: llm.Response{
@@ -29,7 +29,7 @@ func busyModel(turns int) *llmtest.Scripted {
 			Usage:      llm.Usage{InputTokens: 10, OutputTokens: 5},
 		}}
 	}
-	return llmtest.NewScripted(replies...)
+	return llmtest.NewReplay(replies...)
 }
 
 func TestMaxTokensInput(t *testing.T) {
