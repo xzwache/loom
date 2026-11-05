@@ -11,7 +11,7 @@ flowchart LR
     M[model] -- "todo call:<br/>the whole new list" --> T[todo tool]
     T -- "List.Set<br/>(checks, version++)" --> L[(todo.List<br/>in memory)]
     T -- "result: the list as text" --> M
-    L -- "onChange" --> E[TodoUpdated event<br/>total, done]
+    L -- "onChange" --> E[TodoUpdated event<br/>total, done, items]
     E --> TR[trace / command hooks]
     R[Reminder hook<br/>on ModelRequest] -- "reads Version, Items" --> L
     R -- "additionalContext<br/>when stale" --> M
@@ -43,7 +43,7 @@ stays:
 - status is `pending`, `in_progress` or `completed`;
 - at most one item is `in_progress` (one thing at a time).
 
-On success the version goes up, `TodoUpdated{total, done}` fires (a notice: hooks can watch it, not
+On success the version goes up, `TodoUpdated{total, done, items}` fires (a notice: hooks can watch it, not
 change it), and the result is the list as text:
 
 ```

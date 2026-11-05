@@ -2,11 +2,34 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 
 	"github.com/xzwache/loom/internal/compact"
 	"github.com/xzwache/loom/internal/event"
 	"github.com/xzwache/loom/internal/llm"
 )
+
+var ErrNoCompaction = errors.New("compaction is turned off")
+
+// Compact runs every strategy now, not only until the history is under the
+// target. The bool reports whether the history changed.
+func (a *Agent) Compact(ctx context.Context, messages []llm.Message) (Result, bool, error) {
+	if a.Compaction == nil {
+		return Result{}, false, ErrNoCompaction
+	}
+	rs := &runState{agent: a, log: a.Log, tokens: &tokenLedger{}}
+	if rs.log == nil {
+		rs.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	res := Result{Messages: messages, System: a.System}
+	changed := rs.compact(ctx, &res, compact.Manual, messages, compact.Estimate(messages))
+	if res.Stop == StopHalted {
+		res.Detail = rs.haltReason
+	}
+	return res, changed, nil
+}
 
 // compactOnFull compacts once after the model reported a full context, so the
 // turn can be sent again. It drops the response that hit the limit: it is
@@ -34,7 +57,12 @@ func (rs *runState) compact(ctx context.Context, res *Result, trigger compact.Tr
 		res.Stop = StopHalted
 		return false
 	}
-	out, reports, err := rs.agent.Compaction.Run(ctx, compact.Input{Messages: messages, Instructions: pre.AdditionalContext}, size)
+	chain := *rs.agent.Compaction
+	if trigger == compact.Manual {
+		chain.Target = 0
+	}
+	input := compact.Input{Messages: messages, Instructions: pre.AdditionalContext}
+	out, reports, err := chain.Run(ctx, input, size)
 	if err != nil {
 		rs.log.Warn("compaction failed", "trigger", trigger, "error", err)
 	}

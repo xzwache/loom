@@ -49,13 +49,13 @@ to learn from, more to maintain, and a third-party dependency avoided.
 | Method | Phase | loom does |
 |---|---|---|
 | `initialize` | 2 | answers version 1, `agentInfo{name: "loom", version}`, capabilities below, no auth methods |
-| `session/new` | 2 | builds an `App` for `cwd` (new session); returns `sessionId` and config options |
-| `session/prompt` | 2 | `App.Run` with the prompt text; streams updates; returns the stop reason |
+| `session/new` | 2 | builds a `Conversation` for `cwd` (new session); returns `sessionId` and config options |
+| `session/prompt` | 2 | `Conversation.Run` with the prompt text; streams updates; returns the stop reason |
 | `session/cancel` | 2 | cancels that prompt's ctx; the prompt answers `cancelled` |
-| `session/load` | 2 | builds an `App` with `Resume`, replays the history as updates, then answers |
+| `session/load` | 2 | builds a `Conversation` with `Resume`, replays the history as updates, then answers |
 | `session/list` | 2 | `session.Store.List` for `cwd`: id, title, updated time |
 | `session/resume` | 2 | like load, without the replay |
-| `session/close` | 2 | cancels any running prompt, `App.End`, `App.Close` |
+| `session/close` | 2 | cancels any running prompt, `Conversation.End`, `Conversation.Close` |
 | `session/set_config_option` | 2 | permission mode (`Policy.SetMode`), model; answers with all options |
 | `session/set_mode` | 2 | same as the mode option; deprecated in ACP, kept for older clients |
 | `authenticate` | – | not needed: loom reads its key from its own config |
@@ -64,8 +64,8 @@ to learn from, more to maintain, and a third-party dependency avoided.
 Capabilities loom sends: `loadSession: true`, `sessionCapabilities{list, resume, close}`,
 `promptCapabilities` all false at first (text only), `mcpCapabilities{http: true}`.
 
-One ACP session = one `App`. An ACP connection can hold several sessions, so `internal/acp` keeps a
-map from session id to its `App` and its running prompt's cancel func.
+One ACP session = one `Conversation`. An ACP connection can hold several sessions, so `internal/acp` keeps a
+map from session id to its `Conversation` and its running prompt's cancel func.
 
 ### loom → client
 
@@ -92,7 +92,7 @@ What each loom event becomes. "Phase 1" marks events that do not exist yet (see 
 | `PermissionRequest` (ask) | `session/request_permission` | see below |
 | `PostToolUse` | `tool_call_update` `{status: completed, content, rawOutput}` | edits add a `diff` content; read/edit add `locations` |
 | `PostToolUseFailure`, `PermissionDenied` | `tool_call_update` `{status: failed, content: reason}` | |
-| `TodoUpdated` | `plan` `{entries}` | needs the items, not just counts (see below) |
+| `TodoUpdated` | `plan` `{entries}` | carries the items (`Items`) |
 | `ModelResponse.Usage` | `usage_update` `{used, size, cost}` | `used` = tokens in context, `size` = window; cost from the model's price |
 | permission mode changed | `current_mode_update` and `config_option_update` | |
 | `PreCompact` / `PostCompact` | `compaction_update` | only if the client says `session.compaction` |
@@ -127,8 +127,8 @@ shape is settled in phase 1 with the display events.
 
 ### Plan from the todo list
 
-`TodoUpdated` carries only `total` and `done`. For `plan` it needs the items: add `Items` to the
-event (content and status map one to one; `priority` is always `medium`). The task graph is not
+`TodoUpdated` carries `Items` (added for this) besides `total` and `done`: content and status map
+one to one to plan entries; `priority` is always `medium`. The task graph is not
 the plan: it is shared between sessions and has dependencies, so it goes out as loom-specific data.
 
 ## Permissions
@@ -173,7 +173,7 @@ Changing either calls `Policy.SetMode` or switches the model (firing `PreModelSw
 | `max_run_tokens`, `timeout`, `context_full`, `halted` | `end_turn` + a `notice` (error) + `_meta["dev.loom/stop"]` with the real reason |
 
 ACP has no stop reason for the last four. They are not hidden: the notice tells the user, and
-`_meta` carries loom's exact reason for clients that read it. A Go `error` from `App.Run` becomes a
+`_meta` carries loom's exact reason for clients that read it. A Go `error` from `Conversation.Run` becomes a
 JSON-RPC error on the prompt (internal error, -32603).
 
 ## MCP servers from the client
@@ -204,7 +204,7 @@ Other clients ignore all of these, as ACP requires.
 | Question | Decision |
 |---|---|
 | loom-specific data over ACP | `_meta` on existing messages + `_dev.loom/...` notifications (above) |
-| display event names | `ModelTextDelta{Text}`, `ModelThinkingDelta{Text}`, `ToolInputDelta{ToolUseID, Name, Partial}`; tool start/finish reuse `PreToolUse` / `PostToolUse` with the result added; fired by the loop, not hookable (display only) |
+| display event names | built: `ModelTextDelta`, `ModelThinkingDelta`, `ModelToolUse` (a tool call starts streaming), `ToolRunning` (passed its checks); finish is `PostToolUse` / `PostToolUseFailure` / `PermissionDenied`. Shown through `hook.Pipeline.Show`: observers only, never hooks or the trace. See `docs/frontend.md` |
 | `acp`: flag or subcommand | subcommand, `loom acp`: it is a different program (server on stdio), not an option of a run, and it takes no prompt |
 | where the shared ACP types live | in `github.com/coder/acp-go-sdk` |
 

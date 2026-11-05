@@ -95,14 +95,13 @@ func (rs *runState) send(ctx context.Context, res *Result) (llm.Response, error)
 	if n := len(res.Messages); n > 0 && res.Messages[n-1].Role == llm.RoleUser {
 		appendUserText(res, req.AdditionalContext)
 	}
-	// The events are not shown yet; display events will fire from them.
 	resp, err := llm.Collect(a.Model.Stream(ctx, llm.Request{
 		Model:     a.ModelID,
 		System:    res.System,
 		Messages:  res.Messages,
 		Tools:     rs.specs,
 		MaxTokens: a.MaxTokens,
-	}), nil) // TODO: provide callback for "onEvent"
+	}), func(ev llm.StreamEvent) { rs.showStream(ctx, ev) })
 	if err != nil {
 		if stop, ok := stopFromContext(ctx); ok {
 			res.Stop = stop
@@ -111,6 +110,27 @@ func (rs *runState) send(ctx context.Context, res *Result) (llm.Response, error)
 		return llm.Response{}, fmt.Errorf("turn %d: %w", res.Turns+1, err)
 	}
 	return resp, nil
+}
+
+// showStream shows the model's reply as it streams: text, thinking, and the
+// start of each tool call.
+func (rs *runState) showStream(ctx context.Context, ev llm.StreamEvent) {
+	var shown event.Event
+	switch ev := ev.(type) {
+	case llm.TextDelta:
+		shown = event.ModelTextDelta{Text: ev.Text}
+	case llm.ThinkingDelta:
+		shown = event.ModelThinkingDelta{Thinking: ev.Thinking}
+	case llm.BlockStart:
+		use, ok := ev.Block.(llm.ToolUse)
+		if !ok {
+			return
+		}
+		shown = event.ModelToolUse{ToolUseID: use.ID, ToolName: use.Name}
+	default:
+		return
+	}
+	rs.agent.Hooks.Show(ctx, shown)
 }
 
 // record adds the response to the history and the usage, and reports it.

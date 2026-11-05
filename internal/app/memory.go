@@ -23,7 +23,7 @@ const (
 // maxSelected caps the memories named with one request.
 const maxSelected = 5
 
-// appMemory is the App's memory state; App.memory is nil when memory is off.
+// appMemory is the Conversation's memory state; Conversation.memory is nil when memory is off.
 type appMemory struct {
 	cfg    config.Memory
 	store  *memory.Store
@@ -96,16 +96,16 @@ func (m *appMemory) subagentPrompt() string {
 // memoryHint picks the unlisted memories that fit the request, as a note to
 // send with it. A failed selection is logged and the request goes alone. The
 // tokens it used belong to the run.
-func (a *App) memoryHint(ctx context.Context, request string) ([]llm.Text, llm.Usage) {
-	if a.memory == nil || len(a.memory.unlisted) == 0 {
+func (c *Conversation) memoryHint(ctx context.Context, request string) ([]llm.Text, llm.Usage) {
+	if c.memory == nil || len(c.memory.unlisted) == 0 {
 		return nil, llm.Usage{}
 	}
-	picked, usage, err := a.memory.helper.Select(ctx, request, a.memory.unlisted, maxSelected)
+	picked, usage, err := c.memory.helper.Select(ctx, request, c.memory.unlisted, maxSelected)
 	if err != nil {
-		a.log.Warn("memory selection failed", "error", err)
+		c.log.Warn("memory selection failed", "error", err)
 		return nil, usage
 	}
-	a.logUsage("memory selected", usage, "picked", len(picked))
+	c.logUsage("memory selected", usage, "picked", len(picked))
 	if len(picked) == 0 {
 		return nil, usage
 	}
@@ -114,25 +114,25 @@ func (a *App) memoryHint(ctx context.Context, request string) ([]llm.Text, llm.U
 
 // endMemory runs extraction and consolidation and returns the tokens they
 // used. After a run stopped by its token budget it runs neither.
-func (a *App) endMemory(ctx context.Context) llm.Usage {
-	if a.memory == nil {
+func (c *Conversation) endMemory(ctx context.Context) llm.Usage {
+	if c.memory == nil {
 		return llm.Usage{}
 	}
-	if a.lastStop == agent.StopMaxRunTokens {
-		a.log.Info("memory extraction and consolidation skipped: the run used its token budget")
+	if c.lastStop == agent.StopMaxRunTokens {
+		c.log.Info("memory extraction and consolidation skipped: the run used its token budget")
 		return llm.Usage{}
 	}
-	return a.extractMemories(ctx).Add(a.consolidateMemories(ctx))
+	return c.extractMemories(ctx).Add(c.consolidateMemories(ctx))
 }
 
 // extractMemories saves what is worth keeping from this session's new
 // messages. Failures are logged; they never fail the session.
-func (a *App) extractMemories(ctx context.Context) llm.Usage {
-	m := a.memory
+func (c *Conversation) extractMemories(ctx context.Context) llm.Usage {
+	m := c.memory
 	if !m.cfg.AutoExtract {
 		return llm.Usage{}
 	}
-	msgs := a.Session.History.Messages()
+	msgs := c.Session.History.Messages()
 	switch {
 	case len(msgs) == m.from:
 		return llm.Usage{}
@@ -144,17 +144,17 @@ func (a *App) extractMemories(ctx context.Context) llm.Usage {
 	known, _ := m.store.List()
 	out, err := m.helper.Extract(ctx, msgs, known)
 	if err != nil {
-		a.log.Warn("memory extraction failed", "error", err)
+		c.log.Warn("memory extraction failed", "error", err)
 		return out.Usage
 	}
 	for _, r := range out.Rejected {
-		a.log.Warn("extracted memory rejected", "error", r)
+		c.log.Warn("extracted memory rejected", "error", r)
 	}
 	saved := 0
 	for _, mem := range out.Memories {
 		created, err := m.store.Write(mem)
 		if err != nil {
-			a.log.Warn("extracted memory not saved", "name", mem.Name, "error", err)
+			c.log.Warn("extracted memory not saved", "name", mem.Name, "error", err)
 			continue
 		}
 		saved++
@@ -163,17 +163,17 @@ func (a *App) extractMemories(ctx context.Context) llm.Usage {
 		if created {
 			action = memory.ActionCreate
 		}
-		a.hooks.Notify(ctx, event.MemoryWrite{Path: m.store.Path(mem.Scope, mem.Name), Action: action, By: byExtraction})
+		c.hooks.Notify(ctx, event.MemoryWrite{Path: m.store.Path(mem.Scope, mem.Name), Action: action, By: byExtraction})
 	}
-	a.logUsage("memory extracted", out.Usage, "saved", saved, "rejected", len(out.Rejected))
+	c.logUsage("memory extracted", out.Usage, "saved", saved, "rejected", len(out.Rejected))
 	return out.Usage
 }
 
 // consolidateMemories cleans up the memories once there are consolidate_at
 // of them, only after a session that changed one, so an unchanged memory is
 // not sent again and again.
-func (a *App) consolidateMemories(ctx context.Context) llm.Usage {
-	m := a.memory
+func (c *Conversation) consolidateMemories(ctx context.Context) llm.Usage {
+	m := c.memory
 	if m.cfg.ConsolidateAt == 0 || m.writes.Load() == 0 {
 		return llm.Usage{}
 	}
@@ -183,26 +183,26 @@ func (a *App) consolidateMemories(ctx context.Context) llm.Usage {
 	}
 	if len(problems) > 0 {
 		// Unreadable files would look deleted to the model.
-		a.log.Warn("memory consolidation skipped: some memory files are not readable", "files", len(problems))
+		c.log.Warn("memory consolidation skipped: some memory files are not readable", "files", len(problems))
 		return llm.Usage{}
 	}
 	plan, usage, err := m.helper.Consolidate(ctx, mems)
 	if err != nil {
-		a.log.Warn("memory consolidation failed", "error", err)
+		c.log.Warn("memory consolidation failed", "error", err)
 		return usage
 	}
 	changes, err := m.store.Apply(plan)
 	if err != nil {
-		a.log.Warn("memory consolidation not applied; files restored", "error", err)
+		c.log.Warn("memory consolidation not applied; files restored", "error", err)
 		return usage
 	}
-	for _, c := range changes {
-		a.hooks.Notify(ctx, event.MemoryWrite{Path: c.Path, Action: c.Action, By: byConsolidation})
+	for _, change := range changes {
+		c.hooks.Notify(ctx, event.MemoryWrite{Path: change.Path, Action: change.Action, By: byConsolidation})
 	}
-	a.logUsage("memory consolidated", usage, "before", len(mems), "written", len(plan.Write), "deleted", len(plan.Delete))
+	c.logUsage("memory consolidated", usage, "before", len(mems), "written", len(plan.Write), "deleted", len(plan.Delete))
 	return usage
 }
 
-func (a *App) logUsage(msg string, u llm.Usage, args ...any) {
-	a.log.Info(msg, append(args, "input_tokens", u.InputTokens, "output_tokens", u.OutputTokens)...)
+func (c *Conversation) logUsage(msg string, u llm.Usage, args ...any) {
+	c.log.Info(msg, append(args, "input_tokens", u.InputTokens, "output_tokens", u.OutputTokens)...)
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -141,5 +142,12 @@ func TestRunRebuildsSystemAfterCompaction(t *testing.T) {
 	reqs := model.Requests()
 	if reqs[0].System != "old list" || reqs[1].System != "new list" || res.System != "new list" {
 		t.Errorf("systems = %q, %q, result %q; want the rebuilt one after compaction", reqs[0].System, reqs[1].System, res.System)
+	}
+}
+
+func TestCompactWithoutCompaction(t *testing.T) {
+	a := newAgent(t, llmtest.NewReplay())
+	if _, changed, err := a.Compact(context.Background(), prompt()); !errors.Is(err, ErrNoCompaction) || changed {
+		t.Errorf("Compact = %v, %v; want ErrNoCompaction", changed, err)
 	}
 }

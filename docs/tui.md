@@ -20,12 +20,12 @@ protocol decisions are in `docs/acp.md` (agreed 2026-11-01).
 │ tui/ (own module)    │ ── initialize, session/new, prompt, ─▶ │ loom acp             │
 │ Bubble Tea           │    cancel                              │ (cmd/loom, acp mode) │
 │ any ACP agent        │ ◀─ session/update: text chunks, tool ─ │ internal/acp         │
-│                      │    calls, diffs, plan; permission      │ internal/app (App)   │
+│                      │    calls, diffs, plan; permission      │ internal/app (Conversation)   │
 │                      │    requests (the agent asks the TUI)   │                      │
 └──────────────────────┘                                        └──────────────────────┘
 ```
 
-- `loom acp` serves ACP on stdin/stdout, on the same `App` that headless mode builds.
+- `loom acp` serves ACP on stdin/stdout, on the same `Conversation` that headless mode builds.
 - `loom` with no `-p` starts the TUI and loom in one process, the same protocol over an in-memory
   pipe. So there is one code path, not a second "embedded" API.
 - The TUI can also start any other ACP agent as a child process.
@@ -37,7 +37,7 @@ protocol decisions are in `docs/acp.md` (agreed 2026-11-01).
 | streamed text and tool input | done: `llm.Model.Stream`, provider-neutral events (`docs/streaming.md`) | an event per chunk for the UI (display events) |
 | the user approves a tool call | `PermissionRequest` hook exists; in `-p` an ask becomes a deny (`agent/tools.go`) | a hook the UI answers, waiting for the user |
 | cancel the running turn | the run stops on context cancel (`StopCancelled`) | a cancel the UI can send per prompt, keeping the session usable |
-| several prompts in one session | `App.Run` per prompt, session saved after each | fine; needs a long-lived App instead of one `-p` run |
+| several prompts in one session | `Conversation.Run` per prompt, session saved after each | fine; needs a long-lived Conversation instead of one `-p` run |
 | what to show | events for tools, compaction, tasks, memory; `MessageDisplay` and `Notification` defined but unused | map events to ACP `session/update` |
 
 ## Phases
@@ -62,7 +62,7 @@ protocol decisions are in `docs/acp.md` (agreed 2026-11-01).
 3. **Interactive approvals**: an `Approver` the app takes; the permission step calls it on `ask`
    and waits (with ctx), answers allow once / allow always (adds a session rule) / deny. Headless
    keeps "no one can approve".
-4. **Cancel per prompt**: `App.Run` already takes a ctx; the session must stay valid after a
+4. **Cancel per prompt**: `Conversation.Run` already takes a ctx; the session must stay valid after a
    cancel (a cancelled turn leaves the history ending cleanly, tool calls answered).
 5. Tests for each, with the replay model (`llmtest.Replay`).
 

@@ -108,6 +108,7 @@ func (rs *runState) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult
 		call.ToolInput = pre.UpdatedInput
 	}
 
+	rs.agent.Hooks.Show(ctx, event.ToolRunning{ToolCall: call})
 	out, err := rs.exec(ctx, t, call)
 	if err != nil {
 		post := rs.fire(ctx, event.PostToolUseFailure{ToolCall: call, Error: err.Error()})

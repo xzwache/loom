@@ -18,7 +18,7 @@ import (
 	"github.com/xzwache/loom/internal/tool"
 )
 
-func memoryApp(t *testing.T, cfg config.Config, model *llmtest.Replay, mems ...memory.Memory) (*App, *builder) {
+func memoryApp(t *testing.T, cfg config.Config, model *llmtest.Replay, mems ...memory.Memory) (*Conversation, *builder) {
 	t.Helper()
 	cfg.Model = "test-model"
 	workdir, user := t.TempDir(), t.TempDir()
@@ -73,7 +73,7 @@ func fact(name string) memory.Memory {
 	return memory.Memory{Scope: memory.ScopeGlobal, Name: name, Type: memory.TypeProject, Description: "fact " + name, Content: "text of " + name}
 }
 
-func recordWrites(a *App) *[]event.MemoryWrite {
+func recordWrites(a *Conversation) *[]event.MemoryWrite {
 	var writes []event.MemoryWrite
 	hook.On(a.hooks, func(_ context.Context, e event.MemoryWrite) (hook.Outcome, error) {
 		writes = append(writes, e)

@@ -31,7 +31,7 @@ func mcpServer(t *testing.T) string {
 	return ts.URL
 }
 
-// buildWithMCP builds an App with the given user and project MCP files and
+// buildWithMCP builds a Conversation with the given user and project MCP files and
 // returns the MCP events it fired.
 func buildWithMCP(t *testing.T, cfg config.Config, userMCP, projectMCP string) (*builder, []event.Event) {
 	t.Helper()

@@ -34,11 +34,10 @@ import (
 	"github.com/xzwache/loom/internal/trace"
 )
 
-// builder holds the parts the build steps share while an App is put together.
 type builder struct {
 	cfg   config.Config
 	opts  Options
-	app   *App
+	app   *Conversation
 	ws    *tool.FileSystemWorkspace
 	todos *todo.List
 	tools *tool.Registry
@@ -46,8 +45,7 @@ type builder struct {
 	compaction *compact.Chain
 	// source is how the session started, for SessionStart.
 	source string
-	// system is the main agent's prompt; subagentContext is what every
-	// subagent gets after its type's prompt.
+	// system - system prompt
 	system          string
 	subagentContext string
 	// subagentMemory is the read-only memory tool; nil when memory is off.
@@ -61,10 +59,14 @@ func newBuilder(cfg config.Config, opts Options) *builder {
 	if opts.Log == nil {
 		opts.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	hooks := &hook.Pipeline{Log: opts.Log}
+	if opts.Observe != nil {
+		hooks.Observe(opts.Observe)
+	}
 	return &builder{
 		cfg:  cfg,
 		opts: opts,
-		app:  &App{hooks: &hook.Pipeline{Log: opts.Log}, log: opts.Log},
+		app:  &Conversation{hooks: hooks, log: opts.Log},
 	}
 }
 
