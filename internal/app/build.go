@@ -306,7 +306,7 @@ func (b *builder) addSubagents(context.Context) error {
 		Budget:     agent.Budget{MaxTurns: sub.MaxTurns, MaxTokens: sub.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
 		Compaction: b.compaction,
 		Hooks:      b.app.hooks,
-		Approve:    approver(b.policy, b.opts.Approve),
+		Approve:    newApprover(b.policy, b.opts.Approve),
 		Log:        b.app.log,
 	}, types)
 	if err != nil {
