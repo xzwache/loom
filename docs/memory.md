@@ -55,7 +55,7 @@ A file that breaks these rules is left out and logged (`memory left out`), never
 2. **Saving by the model.** The `memory` tool: `list`, `read`, `write` (creates or replaces by scope +
    name), `delete`. The model saves when it learns something lasting, and at once when you say
    "remember" or "forget".
-3. **Automatic extraction.** When a session ends (`App.End`), one model call reads this session's new
+3. **Automatic extraction.** When a session ends (`Conversation.End`), one model call reads this session's new
    messages and returns at most 5 memories to create or update, as JSON. It sees only what you and the
    agent said (origins `user` and `model`), never tool output or loom's system notes (hook context,
    memory hints, summaries), so text from files or web pages cannot become a memory on its own.
@@ -91,7 +91,7 @@ deny rule turns it off for the model: `{"permissions": {"deny": ["memory"]}}`.
 
 - Selection runs for the run it prepares: its tokens are part of the run's usage and count toward
   `max_run_tokens` (`Agent.RunAfter`).
-- Extraction and consolidation run after the run, in `App.End`: their tokens are added to the
+- Extraction and consolidation run after the run, in `Conversation.End`: their tokens are added to the
   session's usage, saved with it, and included in the `-json` output's `usage`. After a run stopped
   by `max_run_tokens` both are skipped, and the log says so.
 

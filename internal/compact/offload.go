@@ -40,7 +40,7 @@ type offload struct {
 }
 
 func (o OffloadOutputs) Compact(ctx context.Context, in Input) (Result, error) {
-	found := o.find(ctx, in.Messages)
+	found := o.findToolResults(ctx, in.Messages)
 	if gain(found) < o.MinTokens {
 		return Result{Messages: in.Messages}, nil
 	}
@@ -60,9 +60,9 @@ func (o OffloadOutputs) Compact(ctx context.Context, in Input) (Result, error) {
 	return res, nil
 }
 
-// find lists the tool results to offload: those before the last KeepTurns
+// findToolResults lists the tool results to offload: those before the last KeepTurns
 // turns, not offloaded yet, and longer than their marker.
-func (o OffloadOutputs) find(ctx context.Context, messages []llm.Message) []offload {
+func (o OffloadOutputs) findToolResults(ctx context.Context, messages []llm.Message) []offload {
 	var found []offload
 	for i, m := range messages[:turnStart(messages, o.KeepTurns)] {
 		for j, b := range m.Content {

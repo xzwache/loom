@@ -21,7 +21,7 @@ type Text struct {
 | Kind | What | Added by |
 |---|---|---|
 | `hook_context` | `additionalContext` from hooks | the agent loop, the subagent tool |
-| `memory_hint` | memories picked for a request | `App.Run` (see `docs/memory.md`) |
+| `memory_hint` | memories picked for a request | `Conversation.Run` (see `docs/memory.md`) |
 | `summary` | the compaction summary that replaces the history | `compact.Summarize` |
 
 ## Rules

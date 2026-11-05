@@ -48,10 +48,12 @@ type entry struct {
 	hook Hook
 }
 
-// Pipeline runs hooks in registration order. A nil Pipeline has no hooks.
+// Pipeline runs hooks in registration order, then the observers
+// (observer.go). A nil Pipeline has no hooks.
 type Pipeline struct {
 	Log         *slog.Logger
 	hookEntries []entry
+	observers   []Observer
 }
 
 func (p *Pipeline) OnAll(h Hook) { p.hookEntries = append(p.hookEntries, entry{hook: h}) }
@@ -86,12 +88,13 @@ func (p *Pipeline) Fire(ctx context.Context, e event.Event) (Outcome, error) {
 			continue
 		}
 		outcome = p.accepted(e.Name(), outcome)
-		out = merge(out, outcome)
+		out = merge(out, outcome) // TODO: consider rework
 		e = apply(e, outcome)
 		if out.Decision == Deny || out.Halt {
 			break
 		}
 	}
+	p.observe(ctx, e)
 	return out, errors.Join(errs...)
 }
 

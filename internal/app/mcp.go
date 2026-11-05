@@ -22,7 +22,7 @@ const untrustedReason = "project server not in mcp.enabled_project_servers of th
 // addMCP starts the servers from the user's mcp.json and the workspace's
 // .mcp.json, all within mcp.startup_timeout, and registers their tools. A
 // server that is skipped, misconfigured or fails to start is logged and
-// reported as an event; loom runs without it. Servers close with the App.
+// reported as an event; loom runs without it. Servers close with the Conversation.
 func (b *builder) addMCP(ctx context.Context) error {
 	env := mcp.Env{Lookup: os.LookupEnv, Refused: b.refusedToMCP}
 	servers, err := mcp.Load(b.userPath(MCPFile), filepath.Join(b.ws.Dir(), "."+MCPFile), b.cfg.MCP.EnabledProjectServers, env)

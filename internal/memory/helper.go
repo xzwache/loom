@@ -45,7 +45,7 @@ type Helper struct {
 
 // ask sends one request and decodes the JSON object in the answer into v.
 func (h Helper) ask(ctx context.Context, system, text string, v any) (llm.Usage, error) {
-	resp, err := h.Model.SendMessage(ctx, llm.Request{
+	resp, err := llm.Send(ctx, h.Model, llm.Request{
 		Model:     h.ModelID,
 		System:    system,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.UserText(text)}}},

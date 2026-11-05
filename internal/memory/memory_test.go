@@ -252,7 +252,7 @@ func TestExtract(t *testing.T) {
 		{"scope": "global", "name": "short-commits", "type": "feedback", "description": "keep commit messages short", "content": "One line.\n**Why:** user asked."},
 		{"scope": "global", "name": "Bad Name", "type": "user", "description": "d", "content": "c"}
 	]}` + "\n```"
-	model := llmtest.NewScripted(llmtest.TextReply(answer))
+	model := llmtest.NewReplay(llmtest.TextReply(answer))
 	e := Helper{Model: model, ModelID: "cheap", MaxTokens: 100}
 	history := []llm.Message{
 		{Role: llm.RoleUser, Content: []llm.Block{llm.UserText("fix the test, and keep commits short")}},
@@ -279,12 +279,12 @@ func TestExtract(t *testing.T) {
 	}
 }
 
-func helperWith(replies ...string) (Helper, *llmtest.Scripted) {
+func helperWith(replies ...string) (Helper, *llmtest.Replay) {
 	var rs []llmtest.Reply
 	for _, r := range replies {
 		rs = append(rs, llmtest.TextReply(r))
 	}
-	model := llmtest.NewScripted(rs...)
+	model := llmtest.NewReplay(rs...)
 	return Helper{Model: model, ModelID: "cheap", MaxTokens: 100}, model
 }
 

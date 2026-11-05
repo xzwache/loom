@@ -56,7 +56,7 @@ func call(id, name string) llm.ToolUse {
 
 // runCalls runs one turn that makes the given calls and returns their results
 // as sent back to the model.
-func runCalls(t *testing.T, a *Agent, model *llmtest.Scripted) []llm.ToolResult {
+func runCalls(t *testing.T, a *Agent, model *llmtest.Replay) []llm.ToolResult {
 	t.Helper()
 	res, err := a.Run(context.Background(), prompt())
 	if err != nil {
@@ -66,12 +66,12 @@ func runCalls(t *testing.T, a *Agent, model *llmtest.Scripted) []llm.ToolResult 
 	return lastResults(t, model.Requests()[1].Messages)
 }
 
-func turnOf(uses ...llm.ToolUse) *llmtest.Scripted {
+func turnOf(uses ...llm.ToolUse) *llmtest.Replay {
 	content := make([]llm.Block, len(uses))
 	for i, u := range uses {
 		content[i] = u
 	}
-	return llmtest.NewScripted(reply(llm.StopToolUse, content...), reply(llm.StopEndTurn, llm.Text{Text: "ok"}))
+	return llmtest.NewReplay(reply(llm.StopToolUse, content...), reply(llm.StopEndTurn, llm.Text{Text: "ok"}))
 }
 
 func resultIDs(results []llm.ToolResult) []string {
@@ -187,14 +187,14 @@ func busyReplies(n int) []llmtest.Reply {
 func TestParentBudgetStopsSubagent(t *testing.T) {
 	noop := funcTool{name: "noop", run: func(context.Context, json.RawMessage) (string, error) { return "ok", nil }}
 	// The child has no token limit of its own; each turn costs 11 tokens.
-	child := newAgent(t, llmtest.NewScripted(busyReplies(10)...), noop)
+	child := newAgent(t, llmtest.NewReplay(busyReplies(10)...), noop)
 	var childRes Result
 	spawn := funcTool{name: "spawn", run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 		res, err := child.Run(ctx, prompt())
 		childRes = res
 		return string(res.Stop), err
 	}}
-	parentModel := llmtest.NewScripted(reply(llm.StopToolUse, use("s", "spawn")), reply(llm.StopEndTurn, llm.Text{Text: "unreached"}))
+	parentModel := llmtest.NewReplay(reply(llm.StopToolUse, use("s", "spawn")), reply(llm.StopEndTurn, llm.Text{Text: "unreached"}))
 	parent := newAgent(t, parentModel, spawn)
 	parent.Budget.MaxTokens = 40
 

@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 )
 
+// Model streams one reply to a request. The stream ends after a MessageStop
+// or an error; Collect or Send turn it into a Response.
 type Model interface {
-	SendMessage(ctx context.Context, req Request) (Response, error)
+	Stream(ctx context.Context, req Request) iter.Seq2[StreamEvent, error]
 }
 
 type Request struct {

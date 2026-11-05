@@ -61,7 +61,7 @@ func run(t *testing.T, tl *Tool, prompt string) string {
 }
 
 func TestRun(t *testing.T) {
-	model := llmtest.NewScripted(llmtest.TextReply("found it in main.go:12"))
+	model := llmtest.NewReplay(llmtest.TextReply("found it in main.go:12"))
 	hooks := &hook.Pipeline{}
 	events := record(hooks)
 	tl := newTool(t, agent.Agent{Model: model, ModelID: "cheap", System: "# Environment", Hooks: hooks, Budget: agent.Budget{MaxTurns: 5}})
@@ -94,7 +94,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunStoppedEarly(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		llmtest.Reply{Response: llm.Response{
 			Content:    []llm.Block{llm.Text{Text: "checking"}, llm.ToolUse{ID: "t1", Name: "missing", Input: json.RawMessage(`{}`)}},
 			StopReason: llm.StopToolUse,
@@ -108,7 +108,7 @@ func TestRunStoppedEarly(t *testing.T) {
 }
 
 func TestRunRefuses(t *testing.T) {
-	tl := newTool(t, agent.Agent{Model: llmtest.NewScripted()})
+	tl := newTool(t, agent.Agent{Model: llmtest.NewReplay()})
 	ctx := event.WithAgent(context.Background(), event.Agent{ID: "agent-1"})
 	if _, err := tl.Run(ctx, json.RawMessage(`{"description":"x","prompt":"y"}`)); err == nil {
 		t.Error("a subagent started a subagent")
@@ -127,7 +127,7 @@ func (f fakeTool) Spec() llm.ToolSpec                                   { return
 func (f fakeTool) Run(context.Context, json.RawMessage) (string, error) { return "", nil }
 
 func TestRunType(t *testing.T) {
-	model := llmtest.NewScripted(llmtest.TextReply("found"))
+	model := llmtest.NewReplay(llmtest.TextReply("found"))
 	all, _ := tool.NewRegistry(fakeTool(tool.Bash), fakeTool(tool.Read), fakeTool(tool.Glob), fakeTool(tool.Write))
 	types, err := LoadTypes()
 	if err != nil {

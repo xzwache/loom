@@ -103,3 +103,47 @@ func TestNilChain(t *testing.T) {
 		t.Errorf("nil chain Fire = %+v, %v; want zero", out, err)
 	}
 }
+
+func TestObserversSeeTheFinalEvent(t *testing.T) {
+	c := &hook.Pipeline{}
+	hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) {
+		return hook.Outcome{UpdatedInput: json.RawMessage(`{"command":"ls"}`)}, nil
+	})
+	hook.On(c, func(context.Context, event.PreToolUse) (hook.Outcome, error) {
+		return hook.Outcome{Decision: hook.Deny}, nil
+	})
+	var seen []string
+	c.Observe(func(_ context.Context, e event.Event) {
+		call, _ := event.Tool(e)
+		seen = append(seen, string(e.Name())+" "+string(call.ToolInput))
+	})
+
+	if _, err := c.Fire(context.Background(), pre(`{"command":"rm"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{`PreToolUse {"command":"ls"}`}; !cmp.Equal(seen, want) {
+		t.Errorf("observer saw %v, want %v", seen, want)
+	}
+}
+
+func TestShowSkipsHooks(t *testing.T) {
+	c := &hook.Pipeline{}
+	hookRan := false
+	c.OnAll(hook.Func(func(context.Context, event.Event) (hook.Outcome, error) {
+		hookRan = true
+		return hook.Outcome{}, nil
+	}))
+	c.Observe(func(context.Context, event.Event) { panic("bug") })
+	var shown []event.Event
+	c.Observe(func(_ context.Context, e event.Event) { shown = append(shown, e) })
+
+	c.Show(context.Background(), event.ModelTextDelta{Text: "hi"})
+	if hookRan {
+		t.Error("a hook ran on a shown event")
+	}
+	if want := []event.Event{event.ModelTextDelta{Text: "hi"}}; !cmp.Equal(shown, want) {
+		t.Errorf("shown %v, want %v (a panicking observer must not stop the others)", shown, want)
+	}
+	var nilPipeline *hook.Pipeline
+	nilPipeline.Show(context.Background(), event.ModelTextDelta{})
+}

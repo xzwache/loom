@@ -28,7 +28,7 @@ func onPre(c *hook.Pipeline, out hook.Outcome, err error) {
 }
 
 func TestRunFiresEvents(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopToolUse, use("t1", "echo"), use("t2", "fail")),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -98,7 +98,7 @@ func TestRunPreToolUse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotInput = ""
-			model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
+			model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 			a := newAgent(t, model, recording)
 			a.Hooks = &hook.Pipeline{}
 			onPre(a.Hooks, tt.out, tt.err)
@@ -126,7 +126,7 @@ func TestRunPreToolUse(t *testing.T) {
 }
 
 func TestRunPostToolUse(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
+	model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 	a := newAgent(t, model, echoTool())
 	a.Hooks = &hook.Pipeline{}
 	hook.On(a.Hooks, func(_ context.Context, e event.PostToolUse) (hook.Outcome, error) {
@@ -144,7 +144,7 @@ func TestRunPostToolUse(t *testing.T) {
 }
 
 func TestRunStopHookContinues(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopEndTurn, llm.Text{Text: "first"}), reply(llm.StopEndTurn, llm.Text{Text: "second"}))
+	model := llmtest.NewReplay(reply(llm.StopEndTurn, llm.Text{Text: "first"}), reply(llm.StopEndTurn, llm.Text{Text: "second"}))
 	a := newAgent(t, model)
 	a.Hooks = &hook.Pipeline{}
 	var active []bool
@@ -168,7 +168,7 @@ func TestRunStopHookContinues(t *testing.T) {
 
 func TestRunUserPromptSubmit(t *testing.T) {
 	t.Run("additional context", func(t *testing.T) {
-		model := llmtest.NewScripted(reply(llm.StopEndTurn))
+		model := llmtest.NewReplay(reply(llm.StopEndTurn))
 		a := newAgent(t, model)
 		a.Hooks = &hook.Pipeline{}
 		hook.On(a.Hooks, func(context.Context, event.UserPromptSubmit) (hook.Outcome, error) {
@@ -188,7 +188,7 @@ func TestRunUserPromptSubmit(t *testing.T) {
 	})
 
 	t.Run("block", func(t *testing.T) {
-		model := llmtest.NewScripted()
+		model := llmtest.NewReplay()
 		a := newAgent(t, model)
 		a.Hooks = &hook.Pipeline{}
 		hook.On(a.Hooks, func(context.Context, event.UserPromptSubmit) (hook.Outcome, error) {
@@ -204,7 +204,7 @@ func TestRunUserPromptSubmit(t *testing.T) {
 }
 
 func TestRunHalt(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo"), use("t2", "echo")))
+	model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "echo"), use("t2", "echo")))
 	a := newAgent(t, model, echoTool())
 	a.Hooks = &hook.Pipeline{}
 	onPre(a.Hooks, hook.Outcome{Halt: true, Reason: "out of disk"}, nil)
@@ -230,7 +230,7 @@ func TestRunHalt(t *testing.T) {
 }
 
 func TestRunBudgetExceededEvent(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")))
+	model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "echo")))
 	a := newAgent(t, model, echoTool())
 	a.Budget.MaxTurns = 1
 	a.Hooks = &hook.Pipeline{}
@@ -259,7 +259,7 @@ func TestRunPermissionRequest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
+			model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 			a := newAgent(t, model, echoTool())
 			a.Hooks = &hook.Pipeline{}
 			onPre(a.Hooks, hook.Outcome{Decision: hook.Ask, Reason: "risky"}, nil)
@@ -276,7 +276,7 @@ func TestRunPermissionRequest(t *testing.T) {
 }
 
 func TestRunModelRequestContext(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
+	model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "echo")), reply(llm.StopEndTurn))
 	a := newAgent(t, model, echoTool())
 	a.Hooks = &hook.Pipeline{}
 	hook.On(a.Hooks, func(_ context.Context, e event.ModelRequest) (hook.Outcome, error) {

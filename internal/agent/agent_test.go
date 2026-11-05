@@ -150,7 +150,7 @@ func TestRunStopReasons(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			model := llmtest.NewScripted(tt.replies...)
+			model := llmtest.NewReplay(tt.replies...)
 			res, err := newAgent(t, model, echoTool()).Run(context.Background(), prompt())
 			if err != nil {
 				t.Fatalf("Run error: %v", err)
@@ -160,7 +160,7 @@ func TestRunStopReasons(t *testing.T) {
 					res.Stop, res.Text, res.Turns, tt.wantStop, tt.wantText, tt.wantTurns)
 			}
 			if model.Remaining() != 0 {
-				t.Errorf("%d scripted replies unused", model.Remaining())
+				t.Errorf("%d replies unused", model.Remaining())
 			}
 			checkHistory(t, res.Messages)
 		})
@@ -174,7 +174,7 @@ func TestRunToolResults(t *testing.T) {
 	panicking := funcTool{name: "panic", run: func(context.Context, json.RawMessage) (string, error) {
 		panic("bug")
 	}}
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopToolUse, use("t1", "echo"), use("t2", "fail"), use("t3", "missing"), use("t4", "panic")),
 		reply(llm.StopEndTurn, llm.Text{Text: "ok"}),
 	)
@@ -199,7 +199,7 @@ func TestRunToolResults(t *testing.T) {
 }
 
 func TestRunSendsRequest(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopEndTurn, llm.Text{Text: "hi"}))
+	model := llmtest.NewReplay(reply(llm.StopEndTurn, llm.Text{Text: "hi"}))
 	a := newAgent(t, model, echoTool())
 	a.System = "be brief"
 
@@ -216,7 +216,7 @@ func TestRunSendsRequest(t *testing.T) {
 }
 
 func TestRunDoesNotModifyInput(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopEndTurn, llm.Text{Text: "hi"}))
+	model := llmtest.NewReplay(reply(llm.StopEndTurn, llm.Text{Text: "hi"}))
 	in := prompt()
 
 	res, err := newAgent(t, model).Run(context.Background(), in)
@@ -238,7 +238,7 @@ func TestRunBudgets(t *testing.T) {
 	}
 
 	t.Run("max turns", func(t *testing.T) {
-		a := newAgent(t, llmtest.NewScripted(loop(5)...), echoTool())
+		a := newAgent(t, llmtest.NewReplay(loop(5)...), echoTool())
 		a.Budget.MaxTurns = 3
 		res, err := a.Run(context.Background(), prompt())
 		if err != nil || res.Stop != StopMaxTurns || res.Turns != 3 {
@@ -248,7 +248,7 @@ func TestRunBudgets(t *testing.T) {
 	})
 
 	t.Run("max run tokens", func(t *testing.T) {
-		a := newAgent(t, llmtest.NewScripted(loop(5)...), echoTool())
+		a := newAgent(t, llmtest.NewReplay(loop(5)...), echoTool())
 		a.Budget.MaxTokens = 20 // each reply uses 11
 		res, err := a.Run(context.Background(), prompt())
 		if err != nil || res.Stop != StopMaxRunTokens || res.Turns != 2 {
@@ -264,7 +264,7 @@ func TestRunBudgets(t *testing.T) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		}}
-		a := newAgent(t, llmtest.NewScripted(loop(2)...), slow)
+		a := newAgent(t, llmtest.NewReplay(loop(2)...), slow)
 		a.Budget.MaxDuration = 50 * time.Millisecond
 		res, err := a.Run(context.Background(), prompt())
 		if err != nil || res.Stop != StopTimeout {
@@ -281,7 +281,7 @@ func TestRunCancelled(t *testing.T) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}}
-	model := llmtest.NewScripted(reply(llm.StopToolUse, use("t1", "block"), use("t2", "block")))
+	model := llmtest.NewReplay(reply(llm.StopToolUse, use("t1", "block"), use("t2", "block")))
 
 	res, err := newAgent(t, model, blocking).Run(ctx, prompt())
 	if err != nil || res.Stop != StopCancelled {
@@ -297,15 +297,15 @@ func TestRunCancelled(t *testing.T) {
 func TestRunErrors(t *testing.T) {
 	boom := errors.New("boom")
 	t.Run("model error", func(t *testing.T) {
-		_, err := newAgent(t, llmtest.NewScripted(llmtest.Reply{Err: boom})).Run(context.Background(), prompt())
+		_, err := newAgent(t, llmtest.NewReplay(llmtest.Reply{Err: boom})).Run(context.Background(), prompt())
 		if !errors.Is(err, boom) {
 			t.Errorf("Run error = %v, want %v", err, boom)
 		}
 	})
 	t.Run("unknown stop reason", func(t *testing.T) {
-		_, err := newAgent(t, llmtest.NewScripted(reply("new_reason"))).Run(context.Background(), prompt())
-		if err == nil || !strings.Contains(err.Error(), "unhandled stop reason") {
-			t.Errorf("Run error = %v, want unhandled stop reason", err)
+		_, err := newAgent(t, llmtest.NewReplay(reply("new_reason"))).Run(context.Background(), prompt())
+		if !errors.Is(err, llm.ErrUnexpectedResponse) || !strings.Contains(err.Error(), "new_reason") {
+			t.Errorf("Run error = %v, want unexpected stop reason new_reason", err)
 		}
 	})
 }

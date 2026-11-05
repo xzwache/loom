@@ -18,7 +18,7 @@ import (
 	"github.com/xzwache/loom/internal/tool"
 )
 
-func memoryApp(t *testing.T, cfg config.Config, model *llmtest.Scripted, mems ...memory.Memory) (*App, *builder) {
+func memoryApp(t *testing.T, cfg config.Config, model *llmtest.Replay, mems ...memory.Memory) (*Conversation, *builder) {
 	t.Helper()
 	cfg.Model = "test-model"
 	workdir, user := t.TempDir(), t.TempDir()
@@ -40,7 +40,7 @@ func memoryApp(t *testing.T, cfg config.Config, model *llmtest.Scripted, mems ..
 func TestMemoryOff(t *testing.T) {
 	cfg := config.Default()
 	cfg.Memory.Enabled = false
-	a, b := memoryApp(t, cfg, llmtest.NewScripted())
+	a, b := memoryApp(t, cfg, llmtest.NewReplay())
 	if _, ok := b.tools.Get(tool.Memory); ok || strings.Contains(a.agent.System, "# Memory") || b.subagentMemory != nil {
 		t.Error("memory is set up although it is off")
 	}
@@ -49,7 +49,7 @@ func TestMemoryOff(t *testing.T) {
 
 func TestMemoryExtractedAtEnd(t *testing.T) {
 	answer := `{"memories": [{"scope": "project", "name": "uses-make", "type": "project", "description": "build with make", "content": "Use make."}]}`
-	model := llmtest.NewScripted(llmtest.TextReply("ok"), llmtest.TextReply(answer))
+	model := llmtest.NewReplay(llmtest.TextReply("ok"), llmtest.TextReply(answer))
 	a, b := memoryApp(t, config.Default(), model)
 	writes := recordWrites(a)
 	if sub, ok := b.subagentMemory.(*memory.Tool); !ok || !sub.ReadOnly {
@@ -73,7 +73,7 @@ func fact(name string) memory.Memory {
 	return memory.Memory{Scope: memory.ScopeGlobal, Name: name, Type: memory.TypeProject, Description: "fact " + name, Content: "text of " + name}
 }
 
-func recordWrites(a *App) *[]event.MemoryWrite {
+func recordWrites(a *Conversation) *[]event.MemoryWrite {
 	var writes []event.MemoryWrite
 	hook.On(a.hooks, func(_ context.Context, e event.MemoryWrite) (hook.Outcome, error) {
 		writes = append(writes, e)
@@ -87,7 +87,7 @@ func TestMemorySelectionForUnlisted(t *testing.T) {
 	for i := range 400 {
 		mems = append(mems, fact(fmt.Sprintf("m%03d", i)))
 	}
-	model := llmtest.NewScripted(llmtest.TextReply(`{"pick": [0]}`), llmtest.TextReply("ok"))
+	model := llmtest.NewReplay(llmtest.TextReply(`{"pick": [0]}`), llmtest.TextReply("ok"))
 	cfg := config.Default()
 	cfg.Memory.AutoExtract = false
 	a, _ := memoryApp(t, cfg, model, mems...)
@@ -120,7 +120,7 @@ func TestMemorySelectionForUnlisted(t *testing.T) {
 func TestMemoryConsolidation(t *testing.T) {
 	write := `{"action":"write","scope":"global","name":"d","type":"user","description":"d","content":"d"}`
 	plan := `{"write": [], "delete": [{"scope": "global", "name": "b"}]}`
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "memory", Input: json.RawMessage(write)}),
 		llmtest.TextReply("ok"),
 		llmtest.TextReply(plan),
@@ -154,7 +154,7 @@ func TestMemoryConsolidation(t *testing.T) {
 func TestSubagentSeesMemoryWrittenThisSession(t *testing.T) {
 	write := `{"action":"write","scope":"project","name":"new-fact","type":"project","description":"written mid-session","content":"x"}`
 	spawn := `{"description":"look","prompt":"look around"}`
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "memory", Input: json.RawMessage(write)}),
 		llmtest.ToolUseReply(llm.ToolUse{ID: "t2", Name: "agent", Input: json.RawMessage(spawn)}),
 		llmtest.TextReply("report"),
@@ -178,7 +178,7 @@ func TestSubagentSeesMemoryWrittenThisSession(t *testing.T) {
 func TestEndCountsMemoryTokens(t *testing.T) {
 	answer := llmtest.TextReply(`{"memories": []}`)
 	answer.Response.Usage = llm.Usage{InputTokens: 70, OutputTokens: 5}
-	model := llmtest.NewScripted(llmtest.TextReply("ok"), answer)
+	model := llmtest.NewReplay(llmtest.TextReply("ok"), answer)
 	a, _ := memoryApp(t, config.Default(), model)
 	res, err := a.Run(context.Background(), "hi")
 	if err != nil {
@@ -200,7 +200,7 @@ func TestEndCountsMemoryTokens(t *testing.T) {
 func TestEndSkipsMemoryAfterTokenBudgetStop(t *testing.T) {
 	busy := llmtest.ToolUseReply(llm.ToolUse{ID: "t1", Name: "memory", Input: json.RawMessage(`{"action":"list"}`)})
 	busy.Response.Usage = llm.Usage{InputTokens: 100}
-	model := llmtest.NewScripted(busy)
+	model := llmtest.NewReplay(busy)
 	cfg := config.Default()
 	cfg.MaxRunTokens = 50
 	a, _ := memoryApp(t, cfg, model)

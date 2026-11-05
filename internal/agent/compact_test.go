@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func compacting(t *testing.T, model llm.Model, s compact.Strategy) *Agent {
 }
 
 func TestRunCompactsBeforeTheContextIsFull(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		sized(reply(llm.StopToolUse, use("t1", "echo")), 1200),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -72,7 +73,7 @@ func TestRunCompactsBeforeTheContextIsFull(t *testing.T) {
 }
 
 func TestRunCompactsWhenTheContextIsFull(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopContextWindowExceeded, llm.Text{Text: "partial"}),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -84,7 +85,7 @@ func TestRunCompactsWhenTheContextIsFull(t *testing.T) {
 }
 
 func TestRunStopsWhenTheContextIsFullTwice(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		reply(llm.StopContextWindowExceeded),
 		reply(llm.StopContextWindowExceeded),
 	)
@@ -95,7 +96,7 @@ func TestRunStopsWhenTheContextIsFullTwice(t *testing.T) {
 }
 
 func TestRunPreCompactCanHalt(t *testing.T) {
-	model := llmtest.NewScripted(reply(llm.StopContextWindowExceeded))
+	model := llmtest.NewReplay(reply(llm.StopContextWindowExceeded))
 	a := compacting(t, model, summarized{})
 	hook.On(a.Hooks, func(context.Context, event.PreCompact) (hook.Outcome, error) {
 		return hook.Outcome{Halt: true, Reason: "no compaction here"}, nil
@@ -110,7 +111,7 @@ func TestRunCountsNewToolOutputInTheContextSize(t *testing.T) {
 	big := funcTool{name: "big", run: func(context.Context, json.RawMessage) (string, error) {
 		return strings.Repeat("x", 4000), nil // about 1000 tokens
 	}}
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		sized(reply(llm.StopToolUse, use("t1", "big")), 500),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -126,7 +127,7 @@ func TestRunCountsNewToolOutputInTheContextSize(t *testing.T) {
 }
 
 func TestRunRebuildsSystemAfterCompaction(t *testing.T) {
-	model := llmtest.NewScripted(
+	model := llmtest.NewReplay(
 		sized(reply(llm.StopToolUse, use("t1", "echo")), 1200),
 		reply(llm.StopEndTurn, llm.Text{Text: "done"}),
 	)
@@ -141,5 +142,12 @@ func TestRunRebuildsSystemAfterCompaction(t *testing.T) {
 	reqs := model.Requests()
 	if reqs[0].System != "old list" || reqs[1].System != "new list" || res.System != "new list" {
 		t.Errorf("systems = %q, %q, result %q; want the rebuilt one after compaction", reqs[0].System, reqs[1].System, res.System)
+	}
+}
+
+func TestCompactWithoutCompaction(t *testing.T) {
+	a := newAgent(t, llmtest.NewReplay())
+	if _, changed, err := a.Compact(context.Background(), prompt()); !errors.Is(err, ErrNoCompaction) || changed {
+		t.Errorf("Compact = %v, %v; want ErrNoCompaction", changed, err)
 	}
 }

@@ -20,7 +20,7 @@ func TestBuildAndRun(t *testing.T) {
 	cfg := config.Default()
 	cfg.Model = "test-model"
 	dirs := Dirs{Home: t.TempDir(), User: t.TempDir(), State: t.TempDir()}
-	opts := Options{Workdir: t.TempDir(), Dirs: dirs, Model: llmtest.NewScripted(llmtest.TextReply("hi"))}
+	opts := Options{Workdir: t.TempDir(), Dirs: dirs, Model: llmtest.NewReplay(llmtest.TextReply("hi"))}
 
 	a, err := Build(context.Background(), cfg, opts)
 	if err != nil {
@@ -42,7 +42,7 @@ func TestBuildAndRun(t *testing.T) {
 }
 
 func TestBuildFailsOnMissingWorkdir(t *testing.T) {
-	opts := Options{Workdir: "/does/not/exist", Model: llmtest.NewScripted()}
+	opts := Options{Workdir: "/does/not/exist", Model: llmtest.NewReplay()}
 	if _, err := Build(context.Background(), config.Default(), opts); err == nil {
 		t.Error("Build succeeded without a workspace")
 	}
@@ -54,7 +54,7 @@ func TestBuildIgnoresFailingNoticeHooks(t *testing.T) {
 	writeFile(t, filepath.Join(workdir, "AGENTS.md"), "Be brief.\n")
 	cfg := config.Default()
 	cfg.Model = "test-model"
-	opts := Options{Workdir: workdir, Dirs: Dirs{User: t.TempDir(), State: t.TempDir()}, Model: llmtest.NewScripted()}
+	opts := Options{Workdir: workdir, Dirs: Dirs{User: t.TempDir(), State: t.TempDir()}, Model: llmtest.NewReplay()}
 
 	b := newBuilder(cfg, opts)
 	var failed []event.Name
