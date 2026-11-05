@@ -67,6 +67,15 @@ func (s *state) startTool(t ToolStarted) error {
 	return nil
 }
 
+func (s *state) setStatus(id string, status ToolStatus) error {
+	i := s.getToolIndex(id)
+	if i < 0 {
+		return fmt.Errorf("tool %s is not open", id)
+	}
+	s.tools[i].Status = status
+	return nil
+}
+
 func (s *state) finishTool(id string) error {
 	i := s.getToolIndex(id)
 	if i < 0 {

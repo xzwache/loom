@@ -32,6 +32,8 @@ type Policy struct {
 	mode   Mode
 	rules  RuleSet
 	guards map[string]ToolGuard
+	// session is the allow rules added by "allow always"; guarded by mu.
+	session rules
 }
 
 // New builds a policy for a workspace rooted at dir. home expands "~/" in
@@ -95,20 +97,24 @@ func (p *Policy) Hook(_ context.Context, e event.PreToolUse) (hook.Outcome, erro
 // Decide decides a call to the named tool. Tool names are case-insensitive;
 // a tool without its own guard needs a rule.
 func (p *Policy) Decide(name string, input json.RawMessage) Verdict {
+	return p.guard(name).Decide(input)
+}
+
+func (p *Policy) guard(name string) ToolGuard {
 	name = strings.ToLower(name)
-	guard, ok := p.guards[name]
-	if !ok {
-		guard = plainGuard{policy: p, tool: name, access: Other}
+	if guard, ok := p.guards[name]; ok {
+		return guard
 	}
-	return guard.Decide(input)
+	return plainGuard{policy: p, tool: name, access: Other}
 }
 
 // evaluate applies the rules and the mode to one call, in this order:
 //  1. a deny rule that fits some form of the target denies;
 //  2. the mode's override for this access, if it has one;
 //  3. an ask rule that fits some form asks;
-//  4. an allow rule that fits every form allows, so a symlink cannot reach a
-//     file the rule was not written for;
+//  4. an allow rule (from the settings, then the session) that fits every
+//     form allows, so a symlink cannot reach a file the rule was not written
+//     for;
 //  5. the mode's fallback for this access, or ask.
 //
 // The floor is not here: guards check it first, and nothing overrides it.
@@ -126,8 +132,19 @@ func (p *Policy) evaluate(tool string, access Access, t target) Verdict {
 	if _, ok := p.rules.allow.first(tool, t.fitsEvery); ok {
 		return allowed()
 	}
-	if v, ok := spec.Fallback[access]; ok {
-		return v
+	if _, ok := p.sessionRules().first(tool, t.fitsEvery); ok {
+		return allowed()
 	}
-	return asked("no rule allows this " + tool + " call")
+	v, ok := spec.Fallback[access]
+	if !ok {
+		v = asked("no rule allows this " + tool + " call")
+	}
+	v.ruleCanAllow = v.Decision == hook.Ask
+	return v
+}
+
+func (p *Policy) sessionRules() rules {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.session
 }

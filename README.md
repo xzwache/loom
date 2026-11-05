@@ -212,7 +212,9 @@ Run `loom -print-config` to see what loom actually uses.
 
 ### Next on the platform
 
-- 🖥️ **TUI**: streaming output, diffs, permission prompt, slash commands (`/reload`)
+- ✋ **Approvals**: the user answers a tool call whose permission is `ask` (allow once, allow always, deny)
+- 🔌 **Editor protocol (ACP)**: `loom acp`, so the TUI and editors such as Zed can drive loom
+- 🖥️ **TUI**: streaming output, permission prompt, slash commands, over ACP
 - 📈 **Observability**: one sink for JSONL, structured logs, OpenTelemetry, cost and cache-hit reports
 - ✏️ **User-editable prompts**: override `system.md` and agent types, `loom init-config`, `loom -print-prompt`
 - 📄 **`loom init`**: the model drafts `AGENTS.md` for review
@@ -256,7 +258,7 @@ Collected in [`references/loom-features.md`](references/loom-features.md). Nothi
 | MCP client | ✅ |
 | `SKILL.md` and `AGENTS.md` | ✅ |
 | Hooks | ✅ |
-| Editor protocol (ACP) | ⬜ |
+| Editor protocol (ACP) | ⬜ next |
 
 </td><td valign="top" width="50%">
 

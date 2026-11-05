@@ -16,6 +16,8 @@ type ToolGuard interface {
 type Verdict struct {
 	Decision hook.Decision
 	Reason   string
+	// ruleCanAllow: no rule matched, so an allow rule would allow the call.
+	ruleCanAllow bool
 }
 
 func allowed() Verdict             { return Verdict{Decision: hook.Allow} }

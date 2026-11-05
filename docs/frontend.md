@@ -5,7 +5,7 @@ cancel them, and get updates as they happen. ACP (`internal/acp`), headless mode
 later UI (web, HTTP) are thin translators on top of it. Decided 2026-11-01 over "display events
 only" (option B).
 
-Status: built (steps 1 and 2 below, and slash commands); approvals, `-p` and ACP are not.
+Status: built (steps 1, 2 and 4 below, and slash commands); `-p` and ACP are not.
 
 ## Layers
 
@@ -56,6 +56,11 @@ s.Close(ctx, frontend.EndOther)             // cancels a running prompt, waits, 
 
 type UI interface {
 	Update(u Update) // one at a time, in order; may call Cancel, not State or Close
+}
+
+// optional: a UI that can answer tool calls the policy asks about (docs/approvals.md)
+type Approver interface {
+	Approve(ctx context.Context, a agent.Approval) (agent.Answer, error)
 }
 ```
 
@@ -135,8 +140,8 @@ model turn. `/usr/bin is empty` is a prompt: its first word has a second slash.
 2. `internal/frontend`: `Session`, updates, live state; tests with `llmtest.Replay` and a
    recording `UI`. **Done.**
 3. `-p` through `frontend` with a printer `UI`: text streams to stdout. One code path.
-4. Approvals: `UI.Approve(ctx, Approval) (Answer, error)`, asked when no hook decided; one at a
-   time; cancel ends the wait as a deny. Answers: allow / deny, once / always.
+4. Approvals: the optional `Approver`, asked when no hook decided; one at a time; cancel ends the
+   wait as a deny (`docs/approvals.md`). **Done.**
 5. Phase 2: `internal/acp` as a `UI` on top of `frontend`.
 
 ## Known gaps
