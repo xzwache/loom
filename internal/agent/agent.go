@@ -32,7 +32,10 @@ type Agent struct {
 	MaxParallel int
 	Budget      Budget
 	Hooks       *hook.Pipeline
-	Log         *slog.Logger
+	// Approve asks the user when the policy asks and no hook decided; nil
+	// denies, as in headless mode. Subagents share it.
+	Approve Approver
+	Log     *slog.Logger
 	// Compaction shrinks the history when it grows too big for the context
 	// window; nil turns it off.
 	Compaction *compact.Chain

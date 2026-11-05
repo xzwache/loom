@@ -59,9 +59,9 @@ protocol decisions are in `docs/acp.md` (agreed 2026-11-01).
 2. **Display events** fired by the loop: model text chunks, tool call started / finished (with
    input and result), so a UI never parses history. Probably uses `MessageDisplay` or new events;
    Decided: `ModelTextDelta`, `ModelThinkingDelta`, `ToolInputDelta` (see `docs/acp.md`).
-3. **Interactive approvals**: an `Approver` the app takes; the permission step calls it on `ask`
-   and waits (with ctx), answers allow once / allow always (adds a session rule) / deny. Headless
-   keeps "no one can approve".
+3. **Interactive approvals** (done, `docs/approvals.md`): an `Approver` the app takes; the
+   permission step calls it on `ask` and waits (with ctx), answers allow once / allow always (adds
+   a session rule) / deny. Headless keeps "no one can approve".
 4. **Cancel per prompt**: `Conversation.Run` already takes a ctx; the session must stay valid after a
    cancel (a cancelled turn leaves the history ending cleanly, tool calls answered).
 5. Tests for each, with the replay model (`llmtest.Replay`).

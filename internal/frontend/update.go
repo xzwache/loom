@@ -51,13 +51,14 @@ type ToolFinished struct {
 type ToolStatus string
 
 const (
-	StatusPending   ToolStatus = "pending"
-	StatusRunning   ToolStatus = "running"
-	StatusDone      ToolStatus = "done"
-	StatusFailed    ToolStatus = "failed"
-	StatusDenied    ToolStatus = "denied"
-	StatusSkipped   ToolStatus = "skipped"
-	StatusCancelled ToolStatus = "cancelled"
+	StatusPending          ToolStatus = "pending"
+	StatusAwaitingApproval ToolStatus = "awaiting_approval"
+	StatusRunning          ToolStatus = "running"
+	StatusDone             ToolStatus = "done"
+	StatusFailed           ToolStatus = "failed"
+	StatusDenied           ToolStatus = "denied"
+	StatusSkipped          ToolStatus = "skipped"
+	StatusCancelled        ToolStatus = "cancelled"
 )
 
 type PlanChanged struct {

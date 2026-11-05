@@ -85,6 +85,9 @@ func (rs *runState) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult
 
 	call := event.ToolCall{ToolUseID: use.ID, ToolName: use.Name, ToolInput: use.Input}
 	pre, err := rs.fireErr(ctx, event.PreToolUse{ToolCall: call})
+	if err == nil && pre.UpdatedInput != nil {
+		call.ToolInput = pre.UpdatedInput
+	}
 	switch {
 	case err != nil:
 		rs.log.Warn("hook failed", "event", "PreToolUse", "error", err)
@@ -101,11 +104,10 @@ func (rs *runState) runTool(ctx context.Context, use llm.ToolUse) llm.ToolResult
 		case req.Decision == hook.Deny:
 			return rs.deny(ctx, call, req.Reason)
 		case req.Decision != hook.Allow:
-			return rs.deny(ctx, call, "needs approval, and no one can approve it in this mode: "+pre.Reason)
+			if why := rs.approve(ctx, call, pre.Reason); why != "" {
+				return rs.deny(ctx, call, why)
+			}
 		}
-	}
-	if pre.UpdatedInput != nil {
-		call.ToolInput = pre.UpdatedInput
 	}
 
 	rs.agent.Hooks.Show(ctx, event.ToolRunning{ToolCall: call})

@@ -43,6 +43,7 @@ type builder struct {
 	tools *tool.Registry
 	// compaction is shared by the agent and its subagents; nil when off.
 	compaction *compact.Chain
+	policy     *permission.Policy
 	// source is how the session started, for SessionStart.
 	source string
 	// system - system prompt
@@ -162,6 +163,7 @@ func (b *builder) addHooks(context.Context) error {
 		return err
 	}
 	hook.On(hooks, policy.Hook)
+	b.policy = policy
 	hook.On(hooks, (&todo.Reminder{List: b.todos, After: b.cfg.TodoReminderTurns}).Hook)
 	return nil
 }
@@ -304,6 +306,7 @@ func (b *builder) addSubagents(context.Context) error {
 		Budget:     agent.Budget{MaxTurns: sub.MaxTurns, MaxTokens: sub.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
 		Compaction: b.compaction,
 		Hooks:      b.app.hooks,
+		Approve:    newApprover(b.policy, b.opts.Approve),
 		Log:        b.app.log,
 	}, types)
 	if err != nil {
@@ -341,6 +344,7 @@ func (b *builder) newAgent(context.Context) error {
 		Budget:        agent.Budget{MaxTurns: b.cfg.MaxTurns, MaxTokens: b.cfg.MaxRunTokens, MaxDuration: b.cfg.MaxDuration.Std()},
 		Compaction:    b.compaction,
 		Hooks:         b.app.hooks,
+		Approve:       newApprover(b.policy, b.opts.Approve),
 		Log:           b.app.log,
 	}
 	return nil

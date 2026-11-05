@@ -146,8 +146,10 @@ The answer `cancelled` (the client cancelled the prompt) denies the call and the
 Claude Code's session rules. `reject_always` is not offered at first: a deny rule from one click is
 easy to set by mistake and hard to see. **Later**, if wanted.
 
-This is phase 1's `Approver`: `internal/acp` implements it by sending the request and waiting for
-the answer with the prompt's ctx. Headless keeps the one that always denies.
+This is phase 1's `Approver` (built, `docs/approvals.md`): `internal/acp` implements
+`frontend.Approver` by sending the request and waiting for the answer with the prompt's ctx. It
+offers `allow-always` only when `Approval.Always` is not empty. Headless has no approver, so the
+call is denied.
 
 ## Modes and model
 

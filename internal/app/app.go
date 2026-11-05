@@ -32,6 +32,9 @@ type Options struct {
 	Latest bool
 	// Observe sees every event from the start of Build on.
 	Observe hook.Observer
+	// Approve asks the user about tool calls the policy asks about; nil
+	// denies them, as headless mode does.
+	Approve agent.Approver
 }
 
 // Conversation is one session and the agent that works in it.

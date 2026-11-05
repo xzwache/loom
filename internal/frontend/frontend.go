@@ -45,6 +45,8 @@ type Session struct {
 	ui       UI
 	log      *slog.Logger
 	commands []Command
+	approver Approver
+	asking   chan struct{} // held while the approver is asked
 
 	// slot is held while a prompt or Close runs; only its holder touches
 	// conversation and closed.
@@ -67,6 +69,10 @@ func Open(ctx context.Context, cfg config.Config, opts app.Options, ui UI) (*Ses
 		session.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	opts.Observe = session.observe
+	if approver, ok := ui.(Approver); ok {
+		session.approver, session.asking = approver, make(chan struct{}, 1)
+		opts.Approve = session.approve
+	}
 	session.opts = opts
 	conv, err := app.Build(ctx, cfg, opts)
 	if err != nil {
