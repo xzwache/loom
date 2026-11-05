@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 )
@@ -18,6 +19,8 @@ type jsonBlock struct {
 	Thinking  string          `json:"thinking,omitempty"`
 	Signature string          `json:"signature,omitempty"`
 	Data      string          `json:"data,omitempty"`
+	Origin    Origin          `json:"origin,omitempty"`
+	Kind      Kind            `json:"kind,omitempty"`
 }
 
 type jsonMessage struct {
@@ -30,7 +33,7 @@ func (m Message) MarshalJSON() ([]byte, error) {
 	for _, b := range m.Content {
 		switch b := b.(type) {
 		case Text:
-			out.Content = append(out.Content, jsonBlock{Type: "text", Text: b.Text})
+			out.Content = append(out.Content, jsonBlock{Type: "text", Text: b.Text, Origin: b.Origin, Kind: b.Kind})
 		case ToolUse:
 			out.Content = append(out.Content, jsonBlock{Type: "tool_use", ID: b.ID, Name: b.Name, Input: b.Input})
 		case ToolResult:
@@ -55,7 +58,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	for _, b := range in.Content {
 		switch b.Type {
 		case "text":
-			msg.Content = append(msg.Content, Text{Text: b.Text})
+			msg.Content = append(msg.Content, Text{Text: b.Text, Origin: cmp.Or(b.Origin, roleOrigin(in.Role)), Kind: b.Kind})
 		case "tool_use":
 			msg.Content = append(msg.Content, ToolUse{ID: b.ID, Name: b.Name, Input: b.Input})
 		case "tool_result":
@@ -70,4 +73,13 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	}
 	*m = msg
 	return nil
+}
+
+// roleOrigin is the origin of a text saved before texts had one: sessions
+// from older versions of loom. Their notes cannot be told apart any more.
+func roleOrigin(r Role) Origin {
+	if r == RoleAssistant {
+		return OriginModel
+	}
+	return OriginUser
 }

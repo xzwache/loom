@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -28,14 +31,30 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.t.Errorf("read request body: %v", err)
 	}
 	f.lastBody = b
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Request-Id", "req_test")
 	if n <= len(f.statuses) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.statuses[n-1])
 		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"overloaded_error","message":"try later"}}`)
 		return
 	}
+	w.Header().Set("Content-Type", "text/event-stream")
 	_, _ = io.WriteString(w, f.body)
+}
+
+// sse writes server events the way the API streams them; each one names
+// its type in a "type" field.
+func sse(t *testing.T, events ...string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, e := range events {
+		var head struct{ Type string }
+		if err := json.Unmarshal([]byte(e), &head); err != nil {
+			t.Fatalf("bad test event %s: %v", e, err)
+		}
+		fmt.Fprintf(&b, "event: %s\ndata: %s\n\n", head.Type, e)
+	}
+	return b.String()
 }
 
 func newTestModel(t *testing.T, api *fakeAPI, maxRetries int) *Anthropic {
@@ -46,46 +65,83 @@ func newTestModel(t *testing.T, api *fakeAPI, maxRetries int) *Anthropic {
 	return NewAnthropic(AnthropicOptions{APIKey: "test-key", BaseURL: srv.URL, MaxRetries: maxRetries})
 }
 
-const toolUseResponse = `{
-	"id": "msg_1", "type": "message", "role": "assistant", "model": "test-model",
-	"content": [
-		{"type": "thinking", "thinking": "check files", "signature": "sig_1"},
-		{"type": "redacted_thinking", "data": "opaque"},
-		{"type": "text", "text": "Listing files."},
-		{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"command": "ls"}}
-	],
-	"stop_reason": "tool_use",
-	"usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3, "cache_creation_input_tokens": 2}
-}`
+// toolUseEvents is a whole streamed reply: thinking, redacted thinking,
+// text and a tool call, each in pieces, with a ping in between.
+var toolUseEvents = []string{
+	`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"test-model","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}`,
+	`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+	`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"check "}}`,
+	`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"files"}}`,
+	`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_1"}}`,
+	`{"type":"content_block_stop","index":0}`,
+	`{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}`,
+	`{"type":"content_block_stop","index":1}`,
+	`{"type":"ping"}`,
+	`{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`,
+	`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Listing "}}`,
+	`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"files."}}`,
+	`{"type":"content_block_stop","index":2}`,
+	`{"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"tu_1","name":"bash","input":{}}}`,
+	`{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"command\": "}}`,
+	`{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"\"ls\"}"}}`,
+	`{"type":"content_block_stop","index":3}`,
+	`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":5}}`,
+	`{"type":"message_stop"}`,
+}
 
-func TestSendMessageResponse(t *testing.T) {
-	m := newTestModel(t, &fakeAPI{body: toolUseResponse}, 0)
+func endTurnEvents(text string) []string {
+	return []string{
+		`{"type":"message_start","message":{"id":"msg_2","type":"message","role":"assistant","model":"m","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + strconv.Quote(text) + `}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+		`{"type":"message_stop"}`,
+	}
+}
 
-	got, err := m.SendMessage(context.Background(), Request{
+func TestStreamResponse(t *testing.T) {
+	m := newTestModel(t, &fakeAPI{body: sse(t, toolUseEvents...)}, 0)
+	var deltas []string
+
+	got, err := Collect(m.Stream(context.Background(), Request{
 		Model: "test-model", MaxTokens: 100,
 		Messages: []Message{{Role: RoleUser, Content: []Block{Text{Text: "hi"}}}},
+	}), func(ev StreamEvent) {
+		switch ev := ev.(type) {
+		case TextDelta:
+			deltas = append(deltas, "text:"+ev.Text)
+		case ThinkingDelta:
+			deltas = append(deltas, "thinking:"+ev.Thinking)
+		case ToolInputDelta:
+			deltas = append(deltas, "input:"+ev.JSON)
+		}
 	})
 	if err != nil {
-		t.Fatalf("SendMessage: %v", err)
+		t.Fatalf("Stream: %v", err)
 	}
 
 	want := Response{
 		Content: []Block{
 			Thinking{Thinking: "check files", Signature: "sig_1"},
 			RedactedThinking{Data: "opaque"},
-			Text{Text: "Listing files."},
+			ModelText("Listing files."),
 			ToolUse{ID: "tu_1", Name: "bash", Input: json.RawMessage(`{"command": "ls"}`)},
 		},
 		StopReason: StopToolUse,
 		Usage:      Usage{InputTokens: 10, OutputTokens: 5, CacheReadTokens: 3, CacheWriteTokens: 2},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("SendMessage response mismatch (-want +got):\n%s", diff)
+		t.Errorf("response mismatch (-want +got):\n%s", diff)
+	}
+	wantDeltas := []string{"thinking:check ", "thinking:files", "text:Listing ", "text:files.", `input:{"command": `, `input:"ls"}`}
+	if diff := cmp.Diff(wantDeltas, deltas); diff != "" {
+		t.Errorf("deltas mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestSendMessageRequest(t *testing.T) {
-	api := &fakeAPI{body: toolUseResponse}
+func TestStreamRequest(t *testing.T) {
+	api := &fakeAPI{body: sse(t, toolUseEvents...)}
 	m := newTestModel(t, api, 0)
 
 	req := Request{
@@ -98,7 +154,7 @@ func TestSendMessageRequest(t *testing.T) {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"],"additionalProperties":false}`),
 		}},
 		Messages: []Message{
-			{Role: RoleUser, Content: []Block{Text{Text: "list files"}}},
+			{Role: RoleUser, Content: []Block{UserText("list files"), SystemText(KindMemoryHint, "read tests-need-db")}},
 			{Role: RoleAssistant, Content: []Block{
 				Thinking{Thinking: "check files", Signature: "sig_1"},
 				RedactedThinking{Data: "opaque"},
@@ -111,13 +167,14 @@ func TestSendMessageRequest(t *testing.T) {
 			}},
 		},
 	}
-	if _, err := m.SendMessage(context.Background(), req); err != nil {
-		t.Fatalf("SendMessage: %v", err)
+	if _, err := Send(context.Background(), m, req); err != nil {
+		t.Fatalf("Send: %v", err)
 	}
 
 	const want = `{
 		"model": "test-model",
 		"max_tokens": 100,
+		"stream": true,
 		"cache_control": {"type": "ephemeral"},
 		"system": [{"type": "text", "text": "You are loom."}],
 		"tools": [{
@@ -131,7 +188,10 @@ func TestSendMessageRequest(t *testing.T) {
 			}
 		}],
 		"messages": [
-			{"role": "user", "content": [{"type": "text", "text": "list files"}]},
+			{"role": "user", "content": [
+				{"type": "text", "text": "list files"},
+				{"type": "text", "text": "<loom-note kind=\"memory_hint\">\nread tests-need-db\n</loom-note>"}
+			]},
 			{"role": "assistant", "content": [
 				{"type": "thinking", "thinking": "check files", "signature": "sig_1"},
 				{"type": "redacted_thinking", "data": "opaque"},
@@ -149,58 +209,107 @@ func TestSendMessageRequest(t *testing.T) {
 	}
 }
 
-func TestSendMessageRetriesOverloaded(t *testing.T) {
-	api := &fakeAPI{statuses: []int{529}, body: toolUseResponse}
+func TestStreamRetriesOverloaded(t *testing.T) {
+	api := &fakeAPI{statuses: []int{529}, body: sse(t, endTurnEvents("ok")...)}
 	m := newTestModel(t, api, 1)
 
-	if _, err := m.SendMessage(context.Background(), Request{Model: "m", MaxTokens: 1}); err != nil {
-		t.Fatalf("SendMessage after one 529: %v", err)
+	if _, err := Send(context.Background(), m, Request{Model: "m", MaxTokens: 1}); err != nil {
+		t.Fatalf("Send after one 529: %v", err)
 	}
 	if got := api.calls.Load(); got != 2 {
 		t.Errorf("API calls = %d, want 2", got)
 	}
 }
 
-func TestSendMessageAPIError(t *testing.T) {
+func TestStreamAPIError(t *testing.T) {
 	m := newTestModel(t, &fakeAPI{statuses: []int{529}}, 0)
 
-	_, err := m.SendMessage(context.Background(), Request{Model: "m", MaxTokens: 1})
+	_, err := Send(context.Background(), m, Request{Model: "m", MaxTokens: 1})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("SendMessage error = %v, want *APIError", err)
+		t.Fatalf("Send error = %v, want *APIError", err)
 	}
 	if apiErr.StatusCode != 529 || apiErr.Type != "overloaded_error" || apiErr.RequestID != "req_test" {
 		t.Errorf("APIError = %+v, want status 529, type overloaded_error, request req_test", apiErr)
 	}
 }
 
-func TestSendMessageUnexpectedResponse(t *testing.T) {
+func TestStreamUnexpectedResponse(t *testing.T) {
+	start := endTurnEvents("x")[0]
 	tests := []struct {
-		name string
-		body string
+		name   string
+		events []string
 	}{
 		{
 			name: "unknown stop reason",
-			body: `{"type":"message","role":"assistant","content":[],"stop_reason":"new_reason","usage":{}}`,
+			events: []string{
+				start,
+				`{"type":"message_delta","delta":{"stop_reason":"new_reason"},"usage":{"output_tokens":1}}`,
+				`{"type":"message_stop"}`,
+			},
 		},
 		{
 			name: "unknown block type",
-			body: `{"type":"message","role":"assistant","content":[{"type":"hologram"}],"stop_reason":"end_turn","usage":{}}`,
+			events: []string{
+				start,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"hologram"}}`,
+			},
+		},
+		{
+			name: "unknown delta type",
+			events: []string{
+				start,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"smell_delta"}}`,
+			},
+		},
+		{
+			name:   "stream cut before the end",
+			events: endTurnEvents("x")[:3],
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newTestModel(t, &fakeAPI{body: tt.body}, 0)
-			_, err := m.SendMessage(context.Background(), Request{Model: "m", MaxTokens: 1})
+			m := newTestModel(t, &fakeAPI{body: sse(t, tt.events...)}, 0)
+			_, err := Send(context.Background(), m, Request{Model: "m", MaxTokens: 1})
 			if !errors.Is(err, ErrUnexpectedResponse) {
-				t.Errorf("SendMessage error = %v, want ErrUnexpectedResponse", err)
+				t.Errorf("Send error = %v, want ErrUnexpectedResponse", err)
 			}
 		})
 	}
 }
 
-func TestSendMessageRejectsBadInput(t *testing.T) {
-	m := newTestModel(t, &fakeAPI{body: toolUseResponse}, 0)
+func TestStreamErrorEvent(t *testing.T) {
+	body := sse(t, endTurnEvents("x")[:3]...) +
+		"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"try later\"}}\n\n"
+	m := newTestModel(t, &fakeAPI{body: body}, 0)
+
+	_, err := Send(context.Background(), m, Request{Model: "m", MaxTokens: 1})
+	if err == nil || !strings.Contains(err.Error(), "overloaded_error") {
+		t.Errorf("Send error = %v, want the overloaded error from the stream", err)
+	}
+}
+
+func TestStreamCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, sse(t, endTurnEvents("x")[:3]...))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	m := NewAnthropic(AnthropicOptions{APIKey: "k", BaseURL: srv.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := Collect(m.Stream(ctx, Request{Model: "m", MaxTokens: 1}), func(StreamEvent) { cancel() })
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Collect error = %v, want context.Canceled", err)
+	}
+}
+
+func TestStreamRejectsBadInput(t *testing.T) {
+	m := newTestModel(t, &fakeAPI{body: sse(t, toolUseEvents...)}, 0)
 	tests := []struct {
 		name string
 		req  Request
@@ -210,8 +319,8 @@ func TestSendMessageRejectsBadInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := m.SendMessage(context.Background(), tt.req); err == nil {
-				t.Error("SendMessage error = nil, want error")
+			if _, err := Send(context.Background(), m, tt.req); err == nil {
+				t.Error("Send error = nil, want error")
 			}
 		})
 	}

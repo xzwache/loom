@@ -43,7 +43,7 @@ func (s Summarize) Compact(ctx context.Context, in Input) (Result, error) {
 	if in.Instructions != "" {
 		ask += "\n\nWhen summarizing, also follow these instructions:\n" + in.Instructions
 	}
-	resp, err := s.Model.SendMessage(ctx, llm.Request{
+	resp, err := llm.Send(ctx, s.Model, llm.Request{
 		Model:     s.ModelID,
 		System:    summaryPrompt,
 		Messages:  []llm.Message{userText(ask)},
@@ -56,7 +56,8 @@ func (s Summarize) Compact(ctx context.Context, in Input) (Result, error) {
 	if summary == "" {
 		return Result{}, errors.New("the model returned an empty summary")
 	}
-	return Result{Messages: []llm.Message{userText(continuation(summary))}, Usage: resp.Usage}, nil
+	note := llm.SystemText(llm.KindSummary, continuation(summary))
+	return Result{Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{note}}}, Usage: resp.Usage}, nil
 }
 
 func continuation(summary string) string {
@@ -80,6 +81,9 @@ func transcript(messages []llm.Message) string {
 func transcriptLine(role llm.Role, b llm.Block) string {
 	switch b := b.(type) {
 	case llm.Text:
+		if b.Origin == llm.OriginSystem {
+			return fmt.Sprintf("[loom note: %s] %s", b.Kind, b.Text)
+		}
 		return fmt.Sprintf("[%s] %s", role, b.Text)
 	case llm.ToolUse:
 		return fmt.Sprintf("[tool call %s] %s", b.Name, b.Input)
@@ -95,7 +99,7 @@ func transcriptLine(role llm.Role, b llm.Block) string {
 }
 
 func userText(s string) llm.Message {
-	return llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: s}}}
+	return llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.UserText(s)}}
 }
 
 func text(content []llm.Block) string {

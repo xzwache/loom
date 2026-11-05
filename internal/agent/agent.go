@@ -6,10 +6,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xzwache/loom/internal/compact"
@@ -25,12 +27,22 @@ type Agent struct {
 	System    string
 	Tools     *tool.Registry
 	MaxTokens int
-	Budget    Budget
-	Hooks     *hook.Pipeline
-	Log       *slog.Logger
+	// MaxParallel caps how many Parallel tool calls (subagents) of one turn
+	// run at once; 0 or 1 runs every call in turn.
+	MaxParallel int
+	Budget      Budget
+	Hooks       *hook.Pipeline
+	// Approve asks the user when the policy asks and no hook decided; nil
+	// denies, as in headless mode. Subagents share it.
+	Approve Approver
+	Log     *slog.Logger
 	// Compaction shrinks the history when it grows too big for the context
 	// window; nil turns it off.
 	Compaction *compact.Chain
+	// RebuildSystem, if set, makes a new system prompt after a compaction
+	// changed the history, such as one with the current memories. Changing
+	// the prompt loses the cached prefix, which compaction has lost anyway.
+	RebuildSystem func() string
 	// Subagent is set when this agent runs for another one. Its events then
 	// carry the subagent in their context, it fires SubagentStop in place of
 	// Stop, and it skips UserPromptSubmit.
@@ -67,22 +79,36 @@ type Result struct {
 	Usage llm.Usage
 	// Detail explains a halted run.
 	Detail string
+	// System is the system prompt the run ended with: Agent.System, or the
+	// one RebuildSystem made.
+	System string
 }
 
 var errTimeBudget = errors.New("time budget exceeded")
 
+type tokenStop struct {
+	limit, used int
+	parent      bool
+}
+
 // runState holds the state of one Run.
 type runState struct {
-	agent      *Agent
-	log        *slog.Logger
-	tools      *tool.Registry
-	specs      []llm.ToolSpec
-	start      time.Time
+	agent *Agent
+	log   *slog.Logger
+	tools *tool.Registry
+	specs []llm.ToolSpec
+	start time.Time
+	// haltMu guards halted and haltReason: parallel tool calls fire hooks
+	// that may halt the run.
+	haltMu     sync.Mutex
 	halted     bool
 	haltReason string
 	// stopHookActive is set once a Stop hook has sent the model back to work.
 	stopHookActive bool
 	subagents      usageMeter
+	tokens         *tokenLedger
+	// overTokens is the budget that stopped the run: its own or a parent's.
+	overTokens tokenStop
 	// contextSize is the context's size in tokens after the last response,
 	// or after the last compaction, when the history had sizedAt messages.
 	contextSize int
@@ -93,6 +119,13 @@ type runState struct {
 }
 
 func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error) {
+	return a.RunAfter(ctx, messages, llm.Usage{})
+}
+
+// RunAfter is Run with tokens spent for this run before it started, such as
+// a call that prepared the prompt: they are part of its Usage and count
+// toward Budget.MaxTokens.
+func (a *Agent) RunAfter(ctx context.Context, messages []llm.Message, spent llm.Usage) (Result, error) {
 	if a.Model == nil {
 		return Result{}, errors.New("agent has no model")
 	}
@@ -110,18 +143,24 @@ func (a *Agent) Run(ctx context.Context, messages []llm.Message) (Result, error)
 	}
 	parent := meterFrom(ctx)
 	ctx = withMeter(ctx, &rs.subagents)
+	rs.tokens = &tokenLedger{limit: a.Budget.MaxTokens, parent: ledgerFrom(ctx)}
+	rs.tokens.add(spent.Total())
+	ctx = withLedger(ctx, rs.tokens)
 	if a.Budget.MaxDuration > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeoutCause(ctx, a.Budget.MaxDuration, errTimeBudget)
 		defer cancel()
 	}
 
-	res := Result{Messages: slices.Clone(messages)}
+	res := Result{Messages: slices.Clone(messages), Usage: spent, System: a.System}
 	err := rs.loop(ctx, &res)
 	res.Usage = res.Usage.Add(rs.subagents.take())
 	parent.add(res.Usage)
-	if res.Stop == StopHalted {
+	switch {
+	case res.Stop == StopHalted:
 		res.Detail = rs.haltReason
+	case res.Stop == StopMaxRunTokens && rs.overTokens.parent:
+		res.Detail = fmt.Sprintf("the parent run's token budget (%d) is used up", rs.overTokens.limit)
 	}
 	rs.finish(context.WithoutCancel(ctx), res, err)
 	return res, err
@@ -135,7 +174,7 @@ func (rs *runState) finish(ctx context.Context, res Result, err error) {
 	case StopMaxTurns:
 		rs.fire(ctx, event.BudgetExceeded{Budget: "turns", Limit: int64(b.MaxTurns), Used: int64(res.Turns)})
 	case StopMaxRunTokens:
-		rs.fire(ctx, event.BudgetExceeded{Budget: "tokens", Limit: int64(b.MaxTokens), Used: int64(res.Usage.Total())})
+		rs.fire(ctx, event.BudgetExceeded{Budget: "tokens", Limit: int64(rs.overTokens.limit), Used: int64(rs.overTokens.used)})
 	case StopTimeout:
 		rs.fire(ctx, event.BudgetExceeded{Budget: "duration_ms", Limit: b.MaxDuration.Milliseconds(), Used: time.Since(rs.start).Milliseconds()})
 	case StopDone, StopCancelled, StopTruncated, StopRefusal, StopContextFull, StopHalted:
@@ -164,7 +203,15 @@ func (rs *runState) fireErr(ctx context.Context, e event.Event) (hook.Outcome, e
 	return out, err
 }
 
+func (rs *runState) isHalted() bool {
+	rs.haltMu.Lock()
+	defer rs.haltMu.Unlock()
+	return rs.halted
+}
+
 func (rs *runState) halt(reason string) {
+	rs.haltMu.Lock()
+	defer rs.haltMu.Unlock()
 	if rs.halted {
 		return
 	}
@@ -201,10 +248,10 @@ func appendUserText(res *Result, s string) {
 	n := len(res.Messages)
 	if n > 0 && res.Messages[n-1].Role == llm.RoleUser {
 		last := &res.Messages[n-1]
-		last.Content = append(slices.Clone(last.Content), llm.Text{Text: s})
+		last.Content = append(slices.Clone(last.Content), llm.SystemText(llm.KindHookContext, s))
 		return
 	}
-	res.Messages = append(res.Messages, llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: s}}})
+	res.Messages = append(res.Messages, llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.SystemText(llm.KindHookContext, s)}})
 }
 
 func stopFromContext(ctx context.Context) (StopReason, bool) {

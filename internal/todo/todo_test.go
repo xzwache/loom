@@ -26,7 +26,8 @@ func TestTool(t *testing.T) {
 	if want := "[x] read code\n[>] fix bug\n[ ] run tests\n"; out != want {
 		t.Errorf("output = %q, want %q", out, want)
 	}
-	if want := []event.TodoUpdated{{Total: 3, Done: 1}}; !cmp.Equal(changed, want) {
+	items := []event.TodoItem{{Content: "read code", Status: "completed"}, {Content: "fix bug", Status: "in_progress"}, {Content: "run tests", Status: "pending"}}
+	if want := []event.TodoUpdated{{Total: 3, Done: 1, Items: items}}; !cmp.Equal(changed, want) {
 		t.Errorf("TodoUpdated = %+v, want %+v", changed, want)
 	}
 

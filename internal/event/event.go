@@ -150,8 +150,14 @@ type InstructionsLoaded struct {
 }
 
 type TodoUpdated struct {
-	Total int `json:"total"`
-	Done  int `json:"done"`
+	Total int        `json:"total"`
+	Done  int        `json:"done"`
+	Items []TodoItem `json:"items"`
+}
+
+type TodoItem struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
 }
 
 type SkillLoaded struct {
@@ -167,8 +173,13 @@ type MemoryRead struct {
 	Path string `json:"path"`
 }
 
+// MemoryWrite fires when a memory is saved or removed. Action is create,
+// update or delete; By is the model (the memory tool), or extraction or
+// consolidation at the end of a session.
 type MemoryWrite struct {
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Action string `json:"action"`
+	By     string `json:"by"`
 }
 
 // Subagents and tasks
@@ -192,8 +203,12 @@ type TaskCreated struct {
 	Subject string `json:"subject"`
 }
 
+// TaskCompleted fires when a task is completed; Owner is the agent that had
+// claimed it.
 type TaskCompleted struct {
-	TaskID string `json:"task_id"`
+	TaskID  string `json:"task_id"`
+	Subject string `json:"subject"`
+	Owner   string `json:"owner"`
 }
 
 // Compaction
@@ -223,6 +238,30 @@ type Notification struct {
 
 type MessageDisplay struct {
 	Text string `json:"text"`
+}
+
+// Shown events go to UIs only (hook.Pipeline.Show): hooks and the trace never
+// see them, and config cannot name them.
+
+// ModelTextDelta is a piece of the model's answer as it streams.
+type ModelTextDelta struct {
+	Text string `json:"text"`
+}
+
+type ModelThinkingDelta struct {
+	Thinking string `json:"thinking"`
+}
+
+// ModelToolUse fires when the model starts writing a tool call; its input is
+// still streaming.
+type ModelToolUse struct {
+	ToolUseID string `json:"tool_use_id"`
+	ToolName  string `json:"tool_name"`
+}
+
+// ToolRunning fires when a tool call has passed its checks and starts.
+type ToolRunning struct {
+	ToolCall
 }
 
 // Environment
@@ -363,6 +402,10 @@ func (PreCompact) Name() Name         { return "PreCompact" }
 func (PostCompact) Name() Name        { return "PostCompact" }
 func (Notification) Name() Name       { return "Notification" }
 func (MessageDisplay) Name() Name     { return "MessageDisplay" }
+func (ModelTextDelta) Name() Name     { return "ModelTextDelta" }
+func (ModelThinkingDelta) Name() Name { return "ModelThinkingDelta" }
+func (ModelToolUse) Name() Name       { return "ModelToolUse" }
+func (ToolRunning) Name() Name        { return "ToolRunning" }
 func (ConfigChange) Name() Name       { return "ConfigChange" }
 func (FileChanged) Name() Name        { return "FileChanged" }
 func (CwdChanged) Name() Name         { return "CwdChanged" }

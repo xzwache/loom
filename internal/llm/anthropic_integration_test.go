@@ -36,9 +36,9 @@ func TestAnthropicToolRoundTrip(t *testing.T) {
 		Messages: []Message{{Role: RoleUser, Content: []Block{Text{Text: "What is today's secret word? Answer with just the word."}}}},
 	}
 
-	first, err := m.SendMessage(ctx, req)
+	first, err := Send(ctx, m, req)
 	if err != nil {
-		t.Fatalf("first SendMessage: %v", err)
+		t.Fatalf("first Send: %v", err)
 	}
 	if first.StopReason != StopToolUse {
 		t.Fatalf("first stop reason = %s, want tool_use; content: %+v", first.StopReason, first.Content)
@@ -54,9 +54,9 @@ func TestAnthropicToolRoundTrip(t *testing.T) {
 		Message{Role: RoleUser, Content: results},
 	)
 
-	second, err := m.SendMessage(ctx, req)
+	second, err := Send(ctx, m, req)
 	if err != nil {
-		t.Fatalf("second SendMessage: %v", err)
+		t.Fatalf("second Send: %v", err)
 	}
 	if second.StopReason != StopEndTurn {
 		t.Fatalf("second stop reason = %s, want end_turn", second.StopReason)

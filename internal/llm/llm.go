@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 )
 
+// Model streams one reply to a request. The stream ends after a MessageStop
+// or an error; Collect or Send turn it into a Response.
 type Model interface {
-	SendMessage(ctx context.Context, req Request) (Response, error)
+	Stream(ctx context.Context, req Request) iter.Seq2[StreamEvent, error]
 }
 
 type Request struct {
@@ -43,8 +46,12 @@ type Message struct {
 // handle them with a type switch.
 type Block interface{ isBlock() }
 
+// Text is made with UserText, ModelText or SystemText, so it always says
+// who wrote it (see Origin).
 type Text struct {
-	Text string
+	Text   string
+	Origin Origin
+	Kind   Kind
 }
 
 type ToolUse struct {

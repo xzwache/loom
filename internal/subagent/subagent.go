@@ -28,6 +28,10 @@ type Tool struct {
 	template agent.Agent
 	types    map[string]prepared
 	spec     llm.ToolSpec
+	// LiveContext, if set, is added to each subagent's prompt when it
+	// starts, for parts that change during a session, such as the memory
+	// list.
+	LiveContext func() string
 }
 
 type prepared struct {
@@ -57,17 +61,24 @@ func New(template agent.Agent, types []Type) (*Tool, error) {
 	}
 
 	enum, _ := json.Marshal(names)
+	budget := "Token budget for this subagent, input and output together; lower it for small tasks."
+	if limit := template.Budget.MaxTokens; limit > 0 {
+		budget += fmt.Sprintf(" At most %d, the default.", limit)
+	}
+	budgetJSON, _ := json.Marshal(budget)
 	t.spec = llm.ToolSpec{
 		Name: tool.Agent,
 		Description: "Start a subagent with a fresh context to do one self-contained task, so its details stay out of your " +
 			"context. The subagent cannot see this conversation, so the prompt must say everything it needs, including " +
-			"what to report back. Only its final report comes back to you.\n\nAgent types:\n" + strings.Join(list, "\n"),
+			"what to report back. Only its final report comes back to you. To run independent tasks at the same time, " +
+			"start several subagents in one response.\n\nAgent types:\n" + strings.Join(list, "\n"),
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"description": {"type": "string", "description": "A short (3-5 word) description of the task"},
 				"prompt": {"type": "string", "description": "The task for the subagent"},
-				"subagent_type": {"type": "string", "enum": ` + string(enum) + `, "description": "The type of agent to use; default ` + TypeGeneral + `"}
+				"subagent_type": {"type": "string", "enum": ` + string(enum) + `, "description": "The type of agent to use; default ` + TypeGeneral + `"},
+				"max_tokens": {"type": "integer", "minimum": 1, "description": ` + string(budgetJSON) + `}
 			},
 			"required": ["description", "prompt"]
 		}`),
@@ -87,22 +98,34 @@ func typeTools(all *tool.Registry, typ Type, log *slog.Logger) *tool.Registry {
 			log.Warn("agent type lists a tool subagents cannot use", "type", typ.Name, "tool", name, "path", typ.Path)
 		}
 	}
+	// Memory is read-only for subagents and its list is in every subagent's
+	// prompt, so every type can read it.
+	if mem, ok := all.Get(tool.Memory); ok {
+		if _, listed := tools.Get(tool.Memory); !listed {
+			_ = tools.Register(mem)
+		}
+	}
 	return tools
 }
 
 func (t *Tool) Spec() llm.ToolSpec { return t.spec }
+func (t *Tool) RunsInParallel()    {}
 
 func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	var in struct {
 		Description  string `json:"description"`
 		Prompt       string `json:"prompt"`
 		SubagentType string `json:"subagent_type"`
+		MaxTokens    int    `json:"max_tokens"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 	if strings.TrimSpace(in.Prompt) == "" {
 		return "", errors.New("prompt is empty")
+	}
+	if in.MaxTokens < 0 {
+		return "", errors.New("max_tokens must be positive")
 	}
 	if _, nested := event.AgentFrom(ctx); nested {
 		return "", errors.New("a subagent cannot start subagents")
@@ -115,18 +138,26 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	a := t.template
 	a.Subagent = event.Agent{ID: newID(), Type: typ.Name}
 	a.ModelID = cmp.Or(typ.Model, a.ModelID)
+	if budget := budgetFor(in.MaxTokens, a.Budget.MaxTokens); budget != in.MaxTokens && in.MaxTokens > 0 && a.Log != nil {
+		a.Log.Info("subagent max_tokens capped", "requested", in.MaxTokens, "limit", budget)
+	}
+	a.Budget.MaxTokens = budgetFor(in.MaxTokens, a.Budget.MaxTokens)
 	a.Tools = typ.tools
 	a.System = strings.TrimSpace(typ.Prompt + "\n\n" + a.System)
-	prompt := in.Prompt
+	if t.LiveContext != nil {
+		a.System = strings.TrimSpace(a.System + "\n\n" + t.LiveContext())
+	}
+	// The parent model wrote the task, but for the subagent it is the request.
+	content := []llm.Block{llm.UserText(in.Prompt)}
 	start, err := a.Hooks.Fire(ctx, event.SubagentStart{AgentID: a.Subagent.ID, AgentType: a.Subagent.Type})
 	if err != nil && a.Log != nil {
 		a.Log.Warn("hook failed", "event", "SubagentStart", "error", err)
 	}
 	if start.AdditionalContext != "" {
-		prompt += "\n\n" + start.AdditionalContext
+		content = append(content, llm.SystemText(llm.KindHookContext, start.AdditionalContext))
 	}
 
-	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.Text{Text: prompt}}}})
+	res, err := a.Run(ctx, []llm.Message{{Role: llm.RoleUser, Content: content}})
 	if err != nil {
 		return "", fmt.Errorf("subagent %s: %w", a.Subagent.ID, err)
 	}
@@ -135,6 +166,15 @@ func (t *Tool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 			"turns", res.Turns, "input_tokens", res.Usage.InputTokens, "output_tokens", res.Usage.OutputTokens)
 	}
 	return report(res), nil
+}
+
+// budgetFor is the subagent's token budget: the requested one, but never
+// more than the configured limit (0 means none).
+func budgetFor(requested, limit int) int {
+	if requested > 0 && (limit == 0 || requested < limit) {
+		return requested
+	}
+	return limit
 }
 
 func report(res agent.Result) string {

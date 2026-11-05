@@ -31,7 +31,7 @@ func mcpServer(t *testing.T) string {
 	return ts.URL
 }
 
-// buildWithMCP builds an App with the given user and project MCP files and
+// buildWithMCP builds a Conversation with the given user and project MCP files and
 // returns the MCP events it fired.
 func buildWithMCP(t *testing.T, cfg config.Config, userMCP, projectMCP string) (*builder, []event.Event) {
 	t.Helper()
@@ -43,7 +43,7 @@ func buildWithMCP(t *testing.T, cfg config.Config, userMCP, projectMCP string) (
 		writeFile(t, filepath.Join(workdir, "."+MCPFile), projectMCP)
 	}
 	cfg.Model = "test-model"
-	b := newBuilder(cfg, Options{Workdir: workdir, Dirs: Dirs{Home: t.TempDir(), User: user, State: t.TempDir()}, Model: llmtest.NewScripted()})
+	b := newBuilder(cfg, Options{Workdir: workdir, Dirs: Dirs{Home: t.TempDir(), User: user, State: t.TempDir()}, Model: llmtest.NewReplay()})
 	var events []event.Event
 	b.app.hooks.OnAll(hook.Func(func(_ context.Context, e event.Event) (hook.Outcome, error) {
 		if strings.HasPrefix(string(e.Name()), "MCP") {
@@ -142,7 +142,7 @@ func TestSubagentToolsNameMCPServers(t *testing.T) {
 	cfg.Subagent.Tools = []string{"read", "nope"}
 	workdir := t.TempDir()
 	cfg.Model = "test-model"
-	_, err := Build(context.Background(), cfg, Options{Workdir: workdir, Dirs: Dirs{Home: t.TempDir(), User: t.TempDir(), State: t.TempDir()}, Model: llmtest.NewScripted()})
+	_, err := Build(context.Background(), cfg, Options{Workdir: workdir, Dirs: Dirs{Home: t.TempDir(), User: t.TempDir(), State: t.TempDir()}, Model: llmtest.NewReplay()})
 	if err == nil || !strings.Contains(err.Error(), `unknown tool "nope"`) {
 		t.Errorf("Build with an unknown built-in tool = %v, want error", err)
 	}

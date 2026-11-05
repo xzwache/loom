@@ -23,10 +23,8 @@ const (
 	Manual Trigger = "manual"
 )
 
-// Input is what a strategy works on.
 type Input struct {
-	Messages []llm.Message
-	// Instructions are extra notes for a summary, from PreCompact hooks.
+	Messages     []llm.Message
 	Instructions string
 }
 
@@ -37,9 +35,6 @@ type Strategy interface {
 	Compact(ctx context.Context, in Input) (Result, error)
 }
 
-// Result is what one strategy did. An error means it failed as a whole;
-// Failed counts the parts it had to leave as they were, such as outputs it
-// could not save, and FailErr is the first reason.
 type Result struct {
 	Messages []llm.Message
 	// Usage is what the strategy itself used, such as a summary call.
@@ -77,13 +72,13 @@ func (c Chain) Needed(size int) bool { return c.Trigger > 0 && size >= c.Trigger
 func (c Chain) Run(ctx context.Context, in Input, size int) ([]llm.Message, []Report, error) {
 	messages := in.Messages
 	var reports []Report
-	for _, s := range c.Strategies {
+	for _, strategy := range c.Strategies {
 		if size <= c.Target {
 			break
 		}
-		r, err := s.Compact(ctx, Input{Messages: messages, Instructions: in.Instructions})
+		r, err := strategy.Compact(ctx, Input{Messages: messages, Instructions: in.Instructions})
 		if err != nil {
-			return messages, reports, fmt.Errorf("%s: %w", s.Name(), err)
+			return messages, reports, fmt.Errorf("%s: %w", strategy.Name(), err)
 		}
 		removed := Estimate(messages) - Estimate(r.Messages)
 		if removed == 0 && r.Usage == (llm.Usage{}) && r.Failed == 0 {
@@ -91,7 +86,7 @@ func (c Chain) Run(ctx context.Context, in Input, size int) ([]llm.Message, []Re
 		}
 		after := max(0, size-removed)
 		reports = append(reports, Report{
-			Strategy:     s.Name(),
+			Strategy:     strategy.Name(),
 			TokensBefore: size,
 			TokensAfter:  after,
 			Usage:        r.Usage,

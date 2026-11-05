@@ -274,7 +274,7 @@ func TestChainNeeded(t *testing.T) {
 }
 
 func TestSummarize(t *testing.T) {
-	model := llmtest.NewScripted(llmtest.TextReply("Task: fix the bug."))
+	model := llmtest.NewReplay(llmtest.TextReply("Task: fix the bug."))
 	s := Summarize{Model: model, ModelID: "cheap", MaxTokens: 100}
 	r, err := s.Compact(context.Background(), Input{Messages: session(), Instructions: "keep failing tests"})
 	if err != nil {
@@ -291,7 +291,7 @@ func TestSummarize(t *testing.T) {
 }
 
 func TestSummarizeCapsTheTranscript(t *testing.T) {
-	model := llmtest.NewScripted(llmtest.TextReply("Task: fix the bug."))
+	model := llmtest.NewReplay(llmtest.TextReply("Task: fix the bug."))
 	s := Summarize{Model: model, MaxInput: 100} // about 400 bytes
 	if _, err := s.Compact(context.Background(), Input{Messages: session()}); err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestSummarizeCapsTheTranscript(t *testing.T) {
 }
 
 func TestSummarizeRejectsEmptySummary(t *testing.T) {
-	s := Summarize{Model: llmtest.NewScripted(llmtest.TextReply("  "))}
+	s := Summarize{Model: llmtest.NewReplay(llmtest.TextReply("  "))}
 	if _, err := s.Compact(context.Background(), Input{Messages: session()}); err == nil {
 		t.Error("an empty summary was accepted")
 	}

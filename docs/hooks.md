@@ -42,9 +42,9 @@ event accepts. `Reason` and `Halt` are accepted everywhere.
 | Event | Accepts | What loom does with it |
 |---|---|---|
 | `SessionStart` | context | appended to the system prompt |
-| `UserPromptSubmit` | context, block | context joins the prompt; block rejects the prompt |
+| `UserPromptSubmit` | context, block | context goes with the prompt as a note; block rejects the prompt |
 | `ModelRequest` | context | added to the last user message before the call |
-| `SubagentStart` | context | appended to the subagent's prompt |
+| `SubagentStart` | context | a note after the subagent's task |
 | `PreToolUse` | decision, rewrite input | deny → the tool does not run; ask → `PermissionRequest` |
 | `PermissionRequest` | decision | who approves when the policy asks |
 | `PostToolUse` | context, rewrite output, block | context and block reason go after the output |
@@ -69,7 +69,9 @@ hooks after it from running.
 When several hooks answer the same event:
 
 - **decision**: the strictest wins: deny > ask > allow;
-- **reasons** are joined with `; `, **context** with a new line;
+- **reasons** are joined with `; `, **context** with a new line. Context that becomes its own text
+  block is a system note (`hook_context`, see `docs/messages.md`): the model gets it in a
+  `<loom-note>` tag, and memory extraction skips it;
 - **input / output**: the last rewrite wins, and later hooks see the rewritten value;
 - **block** and **halt**: any hook can set them;
 - a **deny** or **halt** stops the chain: later hooks do not run.

@@ -19,7 +19,7 @@ type testEnv struct {
 	env
 	stdout *bytes.Buffer
 	stderr *bytes.Buffer
-	model  *llmtest.Scripted
+	model  *llmtest.Replay
 }
 
 func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) *testEnv {
@@ -28,7 +28,9 @@ func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) 
 		vars = map[string]string{"ANTHROPIC_API_KEY": "sk-secret", "LOOM_MODEL": "test-model"}
 	}
 	vars["HOME"] = t.TempDir()
-	te := &testEnv{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, model: llmtest.NewScripted(replies...)}
+	// Memory adds a tool and a model call at the end; memory_test.go covers it.
+	writeFile(t, userConfig(vars["HOME"]), `{"memory": {"enabled": false}}`)
+	te := &testEnv{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, model: llmtest.NewReplay(replies...)}
 	te.env = env{
 		stdout:   te.stdout,
 		stderr:   te.stderr,
@@ -37,6 +39,10 @@ func newTestEnv(t *testing.T, vars map[string]string, replies ...llmtest.Reply) 
 		newModel: func(config.Config) llm.Model { return te.model },
 	}
 	return te
+}
+
+func userConfig(home string) string {
+	return filepath.Join(home, ".config", "loom", "config.json")
 }
 
 func TestRun(t *testing.T) {
@@ -106,7 +112,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Errorf("out.txt = %q, %v; want the bash tool to have run in the workdir", data, err)
 	}
 	req := te.model.Requests()[0]
-	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 7 {
+	if req.Model != "test-model" || !strings.Contains(req.System, te.workdir) || len(req.Tools) != 8 {
 		t.Errorf("first request = model %q, system %q, %d tools", req.Model, req.System, len(req.Tools))
 	}
 }

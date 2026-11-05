@@ -100,13 +100,14 @@ func open(items []Item) bool {
 
 // Updated is the TodoUpdated event for items.
 func Updated(items []Item) event.TodoUpdated {
-	done := 0
+	e := event.TodoUpdated{Total: len(items), Items: make([]event.TodoItem, 0, len(items))}
 	for _, it := range items {
 		if it.Status == Completed {
-			done++
+			e.Done++
 		}
+		e.Items = append(e.Items, event.TodoItem{Content: it.Content, Status: string(it.Status)})
 	}
-	return event.TodoUpdated{Total: len(items), Done: done}
+	return e
 }
 
 type Tool struct {

@@ -20,6 +20,7 @@ import (
 	"github.com/xzwache/loom/internal/hook/command"
 	"github.com/xzwache/loom/internal/permission"
 	"github.com/xzwache/loom/internal/prompt"
+	"github.com/xzwache/loom/internal/task"
 	"github.com/xzwache/loom/internal/tool"
 )
 
@@ -51,6 +52,10 @@ type Config struct {
 	Compaction Compaction `json:"compaction"`
 	// MCP sets how MCP servers start; the servers are listed in .mcp.json.
 	MCP MCP `json:"mcp"`
+	// Memory keeps facts across sessions in the user's folder.
+	Memory Memory `json:"memory"`
+	// Tasks configures the task graph.
+	Tasks Tasks `json:"tasks"`
 	// ChildEnv hides secrets from bash, hooks and MCP servers. Hide adds up
 	// across files; Pass may be set only in the user config.
 	ChildEnv childenv.Filter `json:"child_env"`
@@ -64,8 +69,10 @@ type Config struct {
 
 // Subagent limits each subagent run. An empty Model uses the main model, so
 // a cheaper model can take over searches and other delegated work.
+// MaxParallel caps how many subagents of one turn run at once.
 type Subagent struct {
 	Model        string   `json:"model,omitempty"`
+	MaxParallel  int      `json:"max_parallel"`
 	MaxTurns     int      `json:"max_turns"`
 	MaxRunTokens int      `json:"max_run_tokens"`
 	Tools        []string `json:"tools"`
@@ -85,6 +92,26 @@ type Compaction struct {
 	MinOffloadTokens int      `json:"min_offload_tokens"`
 	SummaryModel     string   `json:"summary_model,omitempty"`
 	OutputsRetention Duration `json:"outputs_retention"`
+}
+
+// Memory: Enabled gives the model its memory and the memory tool.
+// AutoExtract saves what is worth keeping when a session ends. Once there
+// are ConsolidateAt memories, a session that changed one also cleans them up;
+// 0 turns that off. Model makes these calls and picks memories when the list
+// does not fit the prompt; empty uses the subagent model, then the main one.
+type Memory struct {
+	Enabled       bool   `json:"enabled"`
+	AutoExtract   bool   `json:"auto_extract"`
+	ConsolidateAt int    `json:"consolidate_at"`
+	Model         string `json:"model,omitempty"`
+}
+
+// Tasks: List names a task list that sessions of this workspace share; empty
+// gives each session a list of its own. Session lists unused for Retention
+// are deleted; named lists are kept.
+type Tasks struct {
+	List      string   `json:"list,omitempty"`
+	Retention Duration `json:"retention"`
 }
 
 // MCP: a project server in .mcp.json starts only when EnabledProjectServers
@@ -107,9 +134,10 @@ func Default() Config {
 		TodoReminderTurns: 3,
 		InstructionFiles:  slices.Clone(prompt.DefaultInstructionFiles),
 		Subagent: Subagent{
+			MaxParallel:  4,
 			MaxTurns:     30,
 			MaxRunTokens: 500_000,
-			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob},
+			Tools:        []string{tool.Bash, tool.Read, tool.Write, tool.Edit, tool.Glob, tool.Task},
 		},
 		Compaction: Compaction{
 			ContextWindow:    200_000,
@@ -119,6 +147,8 @@ func Default() Config {
 			MinOffloadTokens: 2000,
 			OutputsRetention: Duration(7 * 24 * time.Hour),
 		},
+		Memory:      Memory{Enabled: true, AutoExtract: true, ConsolidateAt: 30},
+		Tasks:       Tasks{Retention: Duration(30 * 24 * time.Hour)},
 		MCP:         MCP{StartupTimeout: Duration(30 * time.Second)},
 		Permissions: permission.Settings{Mode: permission.ModeDefault},
 	}
@@ -226,16 +256,21 @@ func (c Config) Validate() error {
 		{"request_timeout", int64(c.RequestTimeout)},
 		{"bash_timeout", int64(c.BashTimeout)},
 		{"max_tool_output", int64(c.MaxToolOutput)},
+		{"subagent.max_parallel", int64(c.Subagent.MaxParallel)},
 		{"subagent.max_turns", int64(c.Subagent.MaxTurns)},
 		{"subagent.max_run_tokens", int64(c.Subagent.MaxRunTokens)},
 		{"compaction.context_window", int64(c.Compaction.ContextWindow)},
 		{"compaction.outputs_retention", int64(c.Compaction.OutputsRetention)},
 		{"mcp.startup_timeout", int64(c.MCP.StartupTimeout)},
+		{"tasks.retention", int64(c.Tasks.Retention)},
 	}
 	for _, f := range positive {
 		if f.value <= 0 {
 			errs = append(errs, fmt.Errorf("%s must be positive", f.name))
 		}
+	}
+	if c.Memory.ConsolidateAt < 0 {
+		errs = append(errs, fmt.Errorf("memory.consolidate_at must not be negative, got %d", c.Memory.ConsolidateAt))
 	}
 	if c.TodoReminderTurns < 0 {
 		errs = append(errs, fmt.Errorf("todo_reminder_turns must not be negative, got %d", c.TodoReminderTurns))
@@ -255,6 +290,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.MCP.validate(); err != nil {
 		errs = append(errs, err)
+	}
+	if err := task.ValidateListName(c.Tasks.List); c.Tasks.List != "" && err != nil {
+		errs = append(errs, fmt.Errorf("tasks.list: %w", err))
 	}
 	if err := c.ChildEnv.Validate(); err != nil {
 		errs = append(errs, err)

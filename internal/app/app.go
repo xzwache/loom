@@ -1,6 +1,6 @@
 // Package app puts loom together from its config: the workspace, tools, hooks,
 // permission policy, skills, subagents, prompts and session. Headless mode and
-// the interactive UI both build an App, so they behave the same.
+// the interactive UI both build a Conversation, so they behave the same.
 //
 // Build runs named steps in a fixed order (see Build); each step adds one part
 // and may use the parts before it.
@@ -9,6 +9,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/xzwache/loom/internal/agent"
 	"github.com/xzwache/loom/internal/config"
@@ -29,24 +30,32 @@ type Options struct {
 	// Resume is a session id to continue; Latest continues the most recent one.
 	Resume string
 	Latest bool
+	// Observe sees every event from the start of Build on.
+	Observe hook.Observer
+	// Approve asks the user about tool calls the policy asks about; nil
+	// denies them, as headless mode does.
+	Approve agent.Approver
 }
 
-// App is a ready-to-run loom: one session and the agent that works in it.
-type App struct {
+// Conversation is one session and the agent that works in it.
+type Conversation struct {
 	Session session.Session
 	agent   *agent.Agent
 	hooks   *hook.Pipeline
 	store   session.Store
 	log     *slog.Logger
 	closers []func()
+	memory  *appMemory
+	// lastStop is how the last run ended.
+	lastStop agent.StopReason
 }
 
-// Build puts an App together. Close releases it.
-func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
+// Build puts a Conversation together. Close releases it.
+func Build(ctx context.Context, cfg config.Config, opts Options) (*Conversation, error) {
 	return newBuilder(cfg, opts).build(ctx)
 }
 
-func (b *builder) build(ctx context.Context) (*App, error) {
+func (b *builder) build(ctx context.Context) (*Conversation, error) {
 	steps := []func(context.Context) error{
 		b.openWorkspace,
 		b.addTools,
@@ -55,6 +64,8 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 		b.addHooks,
 		b.addSkills,
 		b.loadPrompts,
+		b.addMemory,
+		b.addTasks,
 		b.startSession,
 		b.addMCP,
 		b.newCompaction,
@@ -74,24 +85,56 @@ func (b *builder) build(ctx context.Context) (*App, error) {
 
 // Run gives the agent one prompt in the session and saves the session after,
 // even when the run fails or stops early.
-func (a *App) Run(ctx context.Context, prompt string) (agent.Result, error) {
-	a.Session.History.AddPrompt(prompt)
-	res, err := a.agent.Run(ctx, a.Session.History.Messages())
-	if err := saveSession(context.WithoutCancel(ctx), a.store, &a.Session, res); err != nil {
-		a.log.Warn("session not saved", "error", err)
+func (c *Conversation) Run(ctx context.Context, prompt string) (agent.Result, error) {
+	notes, spent := c.memoryHint(ctx, prompt)
+	c.Session.History.AddPrompt(prompt, notes...)
+	res, err := c.agent.RunAfter(ctx, c.Session.History.Messages(), spent)
+	c.lastStop = res.Stop
+	// A compaction may have rebuilt the prompt; the next run goes on with it.
+	if res.System != "" {
+		c.agent.System = res.System
+	}
+	if err := saveSession(context.WithoutCancel(ctx), c.store, &c.Session, res); err != nil {
+		c.log.Warn("session not saved", "error", err)
 	}
 	return res, err
 }
 
-// End reports that the session is over.
-func (a *App) End(ctx context.Context, reason string) {
-	a.hooks.Notify(ctx, event.SessionEnd{Reason: reason})
+// Compact compacts the history now and saves it. The bool reports whether
+// the history changed.
+func (c *Conversation) Compact(ctx context.Context) (agent.Result, bool, error) {
+	res, changed, err := c.agent.Compact(ctx, c.Session.History.Messages())
+	if err != nil || !changed {
+		return res, changed, err
+	}
+	if res.System != "" {
+		c.agent.System = res.System
+	}
+	if err := saveSession(context.WithoutCancel(ctx), c.store, &c.Session, res); err != nil {
+		c.log.Warn("session not saved", "error", err)
+	}
+	return res, true, nil
+}
+
+// End saves memories from the session and cleans them up, as configured,
+// then reports that the session is over. It returns the tokens that took;
+// they are added to the session's usage.
+func (c *Conversation) End(ctx context.Context, reason string) llm.Usage {
+	used := c.endMemory(ctx)
+	if used.Total() > 0 {
+		c.Session.Usage, c.Session.Updated = c.Session.Usage.Add(used), time.Now()
+		if err := c.store.Save(ctx, c.Session); err != nil {
+			c.log.Warn("session not saved", "error", err)
+		}
+	}
+	c.hooks.Notify(ctx, event.SessionEnd{Reason: reason})
+	return used
 }
 
 // Close releases what Build opened, in reverse order.
-func (a *App) Close() {
-	for i := len(a.closers) - 1; i >= 0; i-- {
-		a.closers[i]()
+func (c *Conversation) Close() {
+	for i := len(c.closers) - 1; i >= 0; i-- {
+		c.closers[i]()
 	}
-	a.closers = nil
+	c.closers = nil
 }
